@@ -39,8 +39,13 @@ def serialize_for_json(obj):
 # ============================================================================
 
 def get_llm_model():
-    """Get a configured LLM model instance."""
-    return ChatOpenAI(model="gpt-4o-mini")
+    """Get a configured LLM model instance with enhanced memory settings."""
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        max_tokens=4000,  # Increased from default for longer responses
+        temperature=0.7,   # Balanced creativity and consistency
+        request_timeout=60  # Allow more time for complex operations
+    )
 
 def clean_json_response(content: str) -> str:
     """Clean JSON response by removing markdown formatting."""
@@ -1895,6 +1900,29 @@ agent = create_react_agent(
 # Chat memory for ongoing conversations
 chat_memory = []
 
+def cleanup_chat_memory():
+    """Clean up chat memory to prevent unlimited growth while preserving important context."""
+    global chat_memory
+    
+    # Keep memory under 100 messages to prevent token overflow
+    if len(chat_memory) > 100:
+        # Keep first 10 messages (initial context) and last 50 messages (recent context)
+        important_messages = chat_memory[:10]  # Initial context
+        recent_messages = chat_memory[-50:]    # Recent context
+        
+        # Remove duplicates and combine
+        seen = set()
+        cleaned_memory = []
+        
+        for msg in important_messages + recent_messages:
+            msg_key = f"{msg['role']}:{msg['content'][:100]}"
+            if msg_key not in seen:
+                seen.add(msg_key)
+                cleaned_memory.append(msg)
+        
+        chat_memory = cleaned_memory
+        print(f"🧹 Memory cleaned: {len(chat_memory)} messages retained")
+
 def get_initial_job_search_prompt():
     """Get the initial job search prompt."""
     # Default flexible prompt
@@ -1938,6 +1966,9 @@ Then analyze these jobs and find the best matches based on my resume and prefere
 
 def run_agent_with_memory(user_message):
     """Run the agent with enhanced memory and agentic capabilities."""
+    # Clean up memory if needed
+    cleanup_chat_memory()
+    
     # Add user message to memory
     chat_memory.append({"role": "user", "content": user_message, "timestamp": datetime.now().isoformat()})
     
@@ -1994,10 +2025,17 @@ Be strategic and helpful, but efficient. Use the right tool for the right job.""
     
     messages.append({"role": "system", "content": system_context})
     
-    # Include recent conversation history (last 8 messages for better context)
-    for msg in chat_memory[-8:]:
+    # Include recent conversation history with smart memory management
+    recent_messages = chat_memory[-20:]  # Get last 20 messages
+    
+    # Smart memory: prioritize important messages and truncate if needed
+    for msg in recent_messages:
         if msg["role"] in ["user", "assistant"]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
+            content = msg["content"]
+            # Truncate very long messages to prevent token overflow
+            if len(content) > 2000:
+                content = content[:2000] + "... [truncated]"
+            messages.append({"role": msg["role"], "content": content})
     
     # Show progress indicator for non-job search requests
     progress = None
@@ -2009,7 +2047,7 @@ Be strategic and helpful, but efficient. Use the right tool for the right job.""
             progress.start()
     
     try:
-        result = agent.invoke({"messages": messages}, config={"recursion_limit": 10})
+        result = agent.invoke({"messages": messages}, config={"recursion_limit": 25})
         
         # Extract and store the agent's response
         if 'messages' in result:
