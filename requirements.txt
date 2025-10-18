@@ -7,7 +7,7 @@ openai>=1.0.0
 tiktoken>=0.5.0
 
 # Job Search & Web Scraping
-jobspy>=0.4.0
+python-jobspy>=0.4.0
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 
