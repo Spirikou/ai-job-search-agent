@@ -1,6 +1,10 @@
 # AI Job Search Agent
 
-An intelligent, autonomous job search system that combines advanced AI-powered job discovery, sophisticated ranking algorithms, intelligent CV customization, and strategic career planning. The agent uses LangGraph framework with ReAct (Reasoning + Acting) pattern to provide comprehensive job search assistance with memory persistence and follow-up capabilities.
+An intelligent job search system that combines AI-powered job discovery, job ranking, CV customization, and allow follow up for strategic career planning. The agent uses LangGraph framework with ReAct (Reasoning + Acting) pattern to provide comprehensive job search assistance with memory persistence and follow-up capabilities.
+
+<div align="center">
+  <img src="images/agent-architecture.png" alt="AI Job Search Agent Architecture" width="800">
+</div>
 
 ## 🤖 What This Agent Does
 
@@ -41,9 +45,8 @@ The AI Job Search Agent is a sophisticated system that:
   - Other roles: 80% similarity + 20% keywords
 
 ### Advanced Filtering System
-- **Negative Keywords**: Automatically filters out internships, graduate roles, entry-level positions
-- **Multi-Field Check**: Searches job title, company, AND description
-- **Comprehensive Coverage**: Includes variations like "part-time", "contract", "freelance"
+- **Negative Keywords**: Automatically filters out internships, graduate roles, entry-level positions (can be adjusted)
+- **Multi-Field Check**: Searches job title, company and description
 - **Transparency**: Shows which jobs were excluded and why
 
 ## 📄 CV Customization System
