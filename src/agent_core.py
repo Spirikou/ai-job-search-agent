@@ -67,8 +67,26 @@ def parse_json_response(content: str, error_context: str = "JSON parsing") -> di
         raise e
 
 def get_data_dir() -> Path:
-    """Get the data directory path."""
-    return Path(__file__).parent.parent / "data"
+    """Get the data directory path with cloud deployment support."""
+    # Try multiple possible locations for the data directory
+    possible_paths = [
+        Path(__file__).parent.parent / "data",  # Local development
+        Path("data"),  # Current working directory
+        Path("/mount/src/ai-job-search-agent/data"),  # Streamlit Cloud
+        Path("/app/data"),  # Alternative cloud path
+        Path.cwd() / "data"  # Fallback to current working directory
+    ]
+    
+    for path in possible_paths:
+        if path.exists() or path.parent.exists():
+            # Create the directory if it doesn't exist
+            path.mkdir(exist_ok=True)
+            return path
+    
+    # If none of the paths work, create in current working directory
+    fallback_path = Path.cwd() / "data"
+    fallback_path.mkdir(exist_ok=True)
+    return fallback_path
 
 class ProgressIndicator:
     """Visual progress indicator for long-running operations."""
@@ -2054,9 +2072,27 @@ def filter_jobs_with_negative_keywords(jobs: List[dict], negative_keywords: List
 
 def convert_resume():
     """Convert PDF resume to structured JSON using LLM."""
+    # Get data directory with debugging
+    data_dir = get_data_dir()
+    print(f"📁 Using data directory: {data_dir}")
+    print(f"📁 Data directory exists: {data_dir.exists()}")
+    
     # Paths
-    pdf_path = get_data_dir() / "Resume.pdf"
-    output_path = get_data_dir() / "base_cv.json"
+    pdf_path = data_dir / "resume.pdf"
+    output_path = data_dir / "base_cv.json"
+    
+    print(f"📄 Looking for resume at: {pdf_path}")
+    print(f"📄 Resume file exists: {pdf_path.exists()}")
+    
+    if not pdf_path.exists():
+        # List files in data directory for debugging
+        try:
+            files_in_data = list(data_dir.glob("*"))
+            print(f"📁 Files in data directory: {[f.name for f in files_in_data]}")
+        except Exception as e:
+            print(f"❌ Error listing data directory: {e}")
+        
+        raise FileNotFoundError(f"Resume file not found at {pdf_path}")
     
     # Extract text from PDF
     with pdfplumber.open(pdf_path) as pdf:
@@ -2511,10 +2547,10 @@ def chatbot_mode():
     show_initial_info()
     
     # Check if resume PDF exists
-    resume_pdf_path = get_data_dir() / "Resume.pdf"
+    resume_pdf_path = get_data_dir() / "resume.pdf"
     if not resume_pdf_path.exists():
-        print("\n❌ ERROR: Resume.pdf not found!")
-        print("Please ensure Resume.pdf is in the data folder.")
+        print("\n❌ ERROR: resume.pdf not found!")
+        print("Please ensure resume.pdf is in the data folder.")
         return
     
     print(f"\n✅ Resume PDF found: {resume_pdf_path.name}")

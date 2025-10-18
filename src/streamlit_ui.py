@@ -382,12 +382,23 @@ def upload_resume_file(uploaded_file) -> bool:
         resume_path = Path("data") / "resume.pdf"
         resume_path.parent.mkdir(exist_ok=True)
         
+        # Debug information
+        st.info(f"📁 Saving resume to: {resume_path.absolute()}")
+        st.info(f"📁 Data directory exists: {resume_path.parent.exists()}")
+        
         # Remove existing resume.pdf if it exists
         if resume_path.exists():
             resume_path.unlink()
         
         with open(resume_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
+        
+        # Verify file was saved
+        if resume_path.exists():
+            st.success(f"✅ Resume saved successfully: {resume_path.absolute()}")
+        else:
+            st.error(f"❌ Failed to save resume to: {resume_path.absolute()}")
+            return False
         
         # Convert resume
         with st.spinner(f"Processing {original_filename}..."):
@@ -405,6 +416,7 @@ def upload_resume_file(uploaded_file) -> bool:
         return True
     except Exception as e:
         st.error(f"Error processing resume: {e}")
+        st.error(f"Error details: {str(e)}")
         return False
 
 def check_resume_file() -> bool:
