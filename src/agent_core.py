@@ -43,7 +43,7 @@ def get_llm_model():
     return ChatOpenAI(
         model="gpt-4o-mini",
         max_tokens=4000,  # Increased from default for longer responses
-        temperature=0.7,   # Balanced creativity and consistency
+        temperature=0.1,   # Balanced creativity and consistency
         request_timeout=60  # Allow more time for complex operations
     )
 
@@ -142,10 +142,11 @@ def extract_keywords_from_roles(preferred_roles: List[str], llm_model: ChatOpenA
     }}
     
     For negative keywords, analyze the preferred roles and determine what job types would be UNWANTED:
-    - If looking for leadership roles (Head, Director, Lead), exclude: intern, junior, entry, trainee, apprentice, assistant, coordinator
-    - If looking for technical roles, exclude: sales, retail, customer service, call center, marketing
-    - If looking for full-time roles, exclude: part-time, temp, contract, freelance, seasonal
-    - If looking for senior roles, exclude: junior, entry, graduate, trainee, intern
+    - If looking for leadership roles (Head, Director, Lead), exclude: intern, junior, entry, trainee, apprentice, assistant, coordinator, graduate, fresher, newbie, starter
+    - If looking for technical roles, exclude: sales, retail, customer service, call center, marketing, administrative
+    - If looking for full-time roles, exclude: part-time, temp, contract, freelance, seasonal, temporary
+    - If looking for senior roles, exclude: junior, entry, graduate, trainee, intern, fresher, newbie, starter, entry-level
+    - Always exclude: unpaid, volunteer, internship, placement, work experience
     
     Focus on keywords that would appear in job titles, not job descriptions.
     Include variations and synonyms.
@@ -165,7 +166,7 @@ def extract_keywords_from_roles(preferred_roles: List[str], llm_model: ChatOpenA
 
 def compute_keyword_score(job_title: str, keywords: Dict[str, List[str]]) -> float:
     """
-    Compute a keyword-based score for job title matching.
+    Compute a keyword-based score for job title matching with enhanced leadership prioritization.
     
     Args:
         job_title: Job title to score
@@ -178,13 +179,13 @@ def compute_keyword_score(job_title: str, keywords: Dict[str, List[str]]) -> flo
     total_score = 0.0
     total_weight = 0.0
     
-    # Weight different keyword categories
+    # Enhanced weights - prioritize leadership roles more heavily
     weights = {
-        "core_technology": 0.4,  # Most important
-        "leadership_level": 0.3,
-        "domain": 0.2,
-        "industry": 0.05,
-        "skills": 0.05
+        "leadership_level": 0.5,  # Most important for leadership roles
+        "core_technology": 0.3,   # Still important but secondary
+        "domain": 0.15,
+        "industry": 0.03,
+        "skills": 0.02
     }
     
     # Calculate positive keyword scores (excluding negative_keywords)
@@ -193,6 +194,15 @@ def compute_keyword_score(job_title: str, keywords: Dict[str, List[str]]) -> flo
             matches = sum(1 for keyword in keyword_list if keyword.lower() in title_lower)
             if keyword_list:  # Avoid division by zero
                 category_score = matches / len(keyword_list)
+                
+                # Boost leadership level scores for exact matches
+                if category == "leadership_level" and matches > 0:
+                    # Check for exact leadership terms
+                    leadership_terms = ["head", "director", "lead", "manager", "principal", "senior", "chief"]
+                    exact_match = any(term in title_lower for term in leadership_terms)
+                    if exact_match:
+                        category_score = min(1.0, category_score * 1.5)  # 50% boost for exact leadership matches
+                
                 total_score += category_score * weights[category]
                 total_weight += weights[category]
     
@@ -475,17 +485,38 @@ def find_best_job_matches(
         job_title = job.get('title', '')
         keyword_score = compute_keyword_score(job_title, keywords)
         
-        # Apply keyword boost to similarity score
-        # 80% similarity + 20% keyword boost
-        final_score = 0.8 * job['similarity_score'] + 0.2 * keyword_score
+        # Apply keyword boost to similarity score with dynamic weighting
+        # For leadership roles, give more weight to keyword matching
+        job_title_lower = job_title.lower()
+        is_leadership_role = any(term in job_title_lower for term in ["head", "director", "lead", "manager", "principal", "senior", "chief"])
+        
+        if is_leadership_role:
+            # For leadership roles: 60% similarity + 40% keyword boost
+            final_score = 0.6 * job['similarity_score'] + 0.4 * keyword_score
+        else:
+            # For other roles: 80% similarity + 20% keyword boost
+            final_score = 0.8 * job['similarity_score'] + 0.2 * keyword_score
         
         # Enhanced result with publishing date and description
+        # Ensure date_posted is properly formatted
+        date_posted = job.get("date_posted", "N/A")
+        if date_posted and date_posted != "N/A":
+            # Convert to string if it's a datetime object
+            if hasattr(date_posted, 'strftime'):
+                date_posted = date_posted.strftime('%Y-%m-%d')
+            elif isinstance(date_posted, str):
+                date_posted = date_posted
+            else:
+                date_posted = str(date_posted)
+        else:
+            date_posted = "N/A"
+        
         result = {
             "title": job.get("title", "N/A"),
             "company": job.get("company", "N/A"),
             "location": job.get("location", "N/A"),
             "url": job.get("job_url", "N/A"),
-            "date_posted": job.get("date_posted", "N/A"),  # Include publishing date
+            "date_posted": date_posted,  # Properly formatted publishing date
             "description": job.get("description", "N/A"),  # Include job description
             "score": round(final_score, 3),
             "resume_similarity": round(job['resume_similarity'], 3),
@@ -901,7 +932,7 @@ This research demonstrates autonomous information gathering and strategic analys
 @tool("fetch_job_description", return_direct=False)
 def fetch_job_description(job_url: str) -> str:
     """
-    Fetch the full job description from a job URL.
+    Fetch the full job description from a job URL with enhanced support for Indeed and other job sites.
     
     Args:
         job_url: URL of the job posting
@@ -911,10 +942,15 @@ def fetch_job_description(job_url: str) -> str:
     """
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
         
-        response = requests.get(job_url, headers=headers, timeout=10)
+        response = requests.get(job_url, headers=headers, timeout=15)
         response.raise_for_status()
         
         # Basic HTML parsing to extract text content
@@ -922,10 +958,85 @@ def fetch_job_description(job_url: str) -> str:
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Remove script and style elements
-        for script in soup(["script", "style"]):
+        for script in soup(["script", "style", "nav", "footer", "aside", "header"]):
             script.decompose()
         
-        # Get text content
+        # Indeed-specific extraction
+        if "indeed.com" in job_url.lower():
+            # Try multiple Indeed selectors
+            job_description_selectors = [
+                'div[data-testid="jobDescriptionText"]',
+                'div.jobsearch-jobDescriptionText',
+                'div#jobDescriptionText',
+                'div.jobDescriptionContent',
+                'div[class*="jobDescription"]',
+                'div[class*="description"]'
+            ]
+            
+            job_description = None
+            for selector in job_description_selectors:
+                desc_element = soup.select_one(selector)
+                if desc_element:
+                    job_description = desc_element.get_text()
+                    break
+            
+            if not job_description:
+                # Fallback: look for common job description patterns
+                desc_elements = soup.find_all(['div', 'section'], string=lambda text: text and len(text) > 100)
+                for element in desc_elements:
+                    if any(keyword in element.get_text().lower() for keyword in ['responsibilities', 'requirements', 'qualifications', 'experience']):
+                        job_description = element.get_text()
+                        break
+            
+            if job_description:
+                # Clean up the text
+                lines = (line.strip() for line in job_description.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                text = ' '.join(chunk for chunk in chunks if chunk)
+                return text[:5000]  # Limit to 5000 characters
+        
+        # LinkedIn-specific extraction
+        elif "linkedin.com" in job_url.lower():
+            # LinkedIn job description selectors
+            linkedin_selectors = [
+                'div.description__text',
+                'div[class*="description"]',
+                'div[class*="job-description"]',
+                'section[class*="description"]'
+            ]
+            
+            for selector in linkedin_selectors:
+                desc_element = soup.select_one(selector)
+                if desc_element:
+                    job_description = desc_element.get_text()
+                    # Clean up the text
+                    lines = (line.strip() for line in job_description.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text = ' '.join(chunk for chunk in chunks if chunk)
+                    return text[:5000]
+        
+        # Generic extraction for other sites
+        else:
+            # Look for common job description patterns
+            job_description_patterns = [
+                'div[class*="job-description"]',
+                'div[class*="description"]',
+                'section[class*="description"]',
+                'div[class*="content"]',
+                'div[class*="details"]'
+            ]
+            
+            for pattern in job_description_patterns:
+                desc_element = soup.select_one(pattern)
+                if desc_element and len(desc_element.get_text()) > 200:
+                    job_description = desc_element.get_text()
+                    # Clean up the text
+                    lines = (line.strip() for line in job_description.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text = ' '.join(chunk for chunk in chunks if chunk)
+                    return text[:5000]
+        
+        # Fallback: get all text content
         text = soup.get_text()
         
         # Clean up the text
@@ -936,8 +1047,8 @@ def fetch_job_description(job_url: str) -> str:
         return text[:5000]  # Limit to 5000 characters to prevent context overflow
         
     except Exception as e:
-        print(f"❌ Error fetching job description: {e}")
-        return "Job description not available"
+        print(f"❌ Error fetching job description from {job_url}: {e}")
+        return f"Job description not available. Error: {str(e)}"
 
 @tool("analyze_job_requirements", return_direct=False)
 def analyze_job_requirements(job_description: str, job_title: str, company: str) -> Dict[str, Any]:
@@ -1218,20 +1329,30 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         
         # Step 4: Generate JSON file
         print("📄 Generating JSON file...")
-        json_path = generate_cv_json.invoke({
-            "customized_cv": customized_cv,
-            "job_title": job_title,
-            "company": company
-        })
+        try:
+            json_path = generate_cv_json.invoke({
+                "customized_cv": customized_cv,
+                "job_title": job_title,
+                "company": company
+            })
+            print(f"✅ JSON generated: {json_path}")
+        except Exception as json_error:
+            print(f"❌ JSON generation error: {json_error}")
+            return f"❌ JSON generation failed: {json_error}"
         
         # Step 5: Generate PDF file
         print("📄 Generating PDF file...")
-        pdf_path = generate_cv_pdf.invoke({
-            "customized_cv": customized_cv,
-            "job_title": job_title,
-            "company": company,
-            "job_description": job_description
-        })
+        try:
+            pdf_path = generate_cv_pdf.invoke({
+                "customized_cv": customized_cv,
+                "job_title": job_title,
+                "company": company,
+                "job_description": job_description
+            })
+            print(f"✅ PDF generated: {pdf_path}")
+        except Exception as pdf_error:
+            print(f"❌ PDF generation error: {pdf_error}")
+            return f"❌ PDF generation failed: {pdf_error}"
         
         # Check if files were created successfully
         if not pdf_path or not json_path:
@@ -1249,6 +1370,172 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
     except Exception as e:
         print(f"❌ Error in create_customized_resume: {e}")
         return f"❌ Error creating customized resume: {e}"
+
+@tool("compare_cv_versions", return_direct=False)
+def compare_cv_versions(customized_cv_path: str = None, job_title: str = None, company: str = None) -> str:
+    """
+    Compare the original CV with a customized version and highlight key differences.
+    
+    Args:
+        customized_cv_path: Path to the customized CV JSON file (optional, will find latest if not provided)
+        job_title: Target job title (optional, will be extracted from CV metadata if available)
+        company: Target company (optional, will be extracted from CV metadata if available)
+    
+    Returns:
+        Detailed comparison analysis between original and customized CVs
+    """
+    try:
+        # Find the latest customized CV if path not provided
+        if not customized_cv_path:
+            data_dir = get_data_dir()
+            cv_files = list(data_dir.glob("CV_*.json"))
+            if not cv_files:
+                return "❌ No customized CV files found. Please create a customized CV first."
+            
+            # Get the most recent CV file
+            customized_cv_path = str(max(cv_files, key=lambda x: x.stat().st_mtime))
+        
+        # Load the customized CV
+        with open(customized_cv_path, 'r', encoding='utf-8') as f:
+            cv_data = json.load(f)
+        
+        # Extract CV data and metadata
+        if "cv_data" in cv_data:
+            customized_cv = cv_data["cv_data"]
+            metadata = cv_data.get("metadata", {})
+        else:
+            customized_cv = cv_data
+            metadata = {}
+        
+        # Get job title and company from metadata or parameters
+        target_job_title = job_title or metadata.get("target_job", "Unknown Position")
+        target_company = company or metadata.get("target_company", "Unknown Company")
+        
+        # Load original CV for comparison
+        try:
+            with open("data/base_cv.json", 'r', encoding='utf-8') as f:
+                original_cv = json.load(f)
+        except Exception as e:
+            return f"❌ Error loading original CV: {e}"
+        
+        # Use LLM to perform detailed comparison
+        llm_model = get_llm_model()
+        
+        prompt = f"""
+        You are an expert CV consultant who compares CV versions and explains the strategic differences.
+        
+        TARGET JOB:
+        Title: {target_job_title}
+        Company: {target_company}
+        
+        ORIGINAL CV:
+        {json.dumps(original_cv, indent=2)}
+        
+        CUSTOMIZED CV:
+        {json.dumps(customized_cv, indent=2)}
+        
+        Provide a comprehensive comparison that includes:
+        
+        1. **EXECUTIVE SUMMARY**
+           - Overall strategy used in customization
+           - Key changes made
+           - Expected impact on job application
+        
+        2. **SECTION-BY-SECTION ANALYSIS**
+           - Summary changes and improvements
+           - Skills section modifications
+           - Experience section enhancements
+           - Education and other sections
+        
+        3. **KEYWORD INTEGRATION**
+           - Job-relevant keywords added
+           - ATS optimization improvements
+           - Industry-specific terminology
+        
+        4. **STRATEGIC IMPROVEMENTS**
+           - How each change better aligns with the target role
+           - Quantified improvements where possible
+           - Risk assessment of changes
+        
+        5. **RECOMMENDATIONS**
+           - Additional improvements that could be made
+           - Areas that work particularly well
+           - Potential concerns or over-optimization
+        
+        Focus on practical insights that help the user understand the value and reasoning behind each modification.
+        """
+        
+        response = llm_model.invoke([
+            {"role": "system", "content": "You are an expert CV consultant who provides detailed, actionable analysis of CV customizations and explains the strategic reasoning behind each modification."},
+            {"role": "user", "content": prompt}
+        ])
+        
+        return response.content.strip()
+        
+    except Exception as e:
+        return f"❌ Error comparing CV versions: {e}"
+
+@tool("get_cv_file_info", return_direct=False)
+def get_cv_file_info() -> str:
+    """
+    Get information about available CV files (original and customized versions).
+    
+    Returns:
+        Information about all available CV files with metadata
+    """
+    try:
+        data_dir = get_data_dir()
+        
+        # Get original CV info
+        original_cv_path = data_dir / "base_cv.json"
+        original_info = ""
+        if original_cv_path.exists():
+            with open(original_cv_path, 'r', encoding='utf-8') as f:
+                original_data = json.load(f)
+            original_info = f"📄 **Original CV**: base_cv.json\n"
+            original_info += f"   - Converted from PDF on: {original_data.get('conversion_date', 'Unknown')}\n"
+            original_info += f"   - Summary: {original_data.get('summary', 'N/A')[:100]}...\n"
+            original_info += f"   - Skills categories: {len(original_data.get('skills', {}))}\n"
+            original_info += f"   - Experience entries: {len(original_data.get('experience', []))}\n\n"
+        
+        # Get customized CV files
+        cv_files = list(data_dir.glob("CV_*.json"))
+        customized_info = ""
+        if cv_files:
+            customized_info = "📄 **Customized CVs**:\n"
+            for cv_file in sorted(cv_files, key=lambda x: x.stat().st_mtime, reverse=True):
+                try:
+                    with open(cv_file, 'r', encoding='utf-8') as f:
+                        cv_data = json.load(f)
+                    
+                    metadata = cv_data.get("metadata", {})
+                    file_time = datetime.fromtimestamp(cv_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                    
+                    customized_info += f"   - **{cv_file.name}**\n"
+                    customized_info += f"     Created: {file_time}\n"
+                    customized_info += f"     Target Job: {metadata.get('target_job', 'N/A')}\n"
+                    customized_info += f"     Target Company: {metadata.get('target_company', 'N/A')}\n"
+                    customized_info += f"     Description: {metadata.get('description', 'N/A')}\n\n"
+                except Exception as e:
+                    customized_info += f"   - **{cv_file.name}** (Error reading: {e})\n\n"
+        else:
+            customized_info = "📄 **Customized CVs**: None found\n\n"
+        
+        # Get PDF files
+        pdf_files = list(data_dir.glob("Resume_*.pdf"))
+        pdf_info = ""
+        if pdf_files:
+            pdf_info = "📄 **PDF Resumes**:\n"
+            for pdf_file in sorted(pdf_files, key=lambda x: x.stat().st_mtime, reverse=True):
+                file_time = datetime.fromtimestamp(pdf_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                pdf_info += f"   - **{pdf_file.name}** (Created: {file_time})\n"
+        else:
+            pdf_info = "📄 **PDF Resumes**: None found\n"
+        
+        return f"# CV Files Information\n\n{original_info}{customized_info}{pdf_info}\n\n💡 **Usage Tips**:\n- Use 'compare_cv_versions' to analyze differences between original and customized CVs\n- Use 'explain_cv_modifications' for detailed modification analysis\n- Use 'read_resume_file' to examine specific CV files"
+        
+    except Exception as e:
+        return f"❌ Error getting CV file information: {e}"
 
 @tool("explain_cv_modifications", return_direct=False)
 def explain_cv_modifications(customized_cv_path: str, job_title: str = None, company: str = None) -> str:
@@ -1486,36 +1773,54 @@ Inputs (provided to you):
 - job_description: the target job description text (if available). If not provided, tailor using job_title and company only.
 
 Hard rules you MUST follow:
-1. Do NOT invent facts. Never create company names, job titles, dates, metrics, or certifications that do not appear in cv_content. If a required fact is missing, omit it or use a neutral placeholder like "[not provided]". Do not insert numeric metrics unless the user explicitly provided them.
-2. Follow this internal, stepwise process before producing output (apply these steps in order):
-   a. Parse the job_description (or job_title/company) and extract up to 12 high-priority keywords, skills, and competencies (technical skills, tools, seniority verbs, metrics, domain words).
-   b. Match those keywords to entries in cv_content; tag which experiences, skills, and achievements are relevant.
-   c. Convert responsibility statements into achievement-focused bullet points using the formula: Action verb + what you did + result/impact (quantify when the candidate provided numbers).
-   d. Prioritize and re-order bullets so that the most relevant achievements for the target job appear first under each role.
-3. Use the Harvard CV structure exactly as the layout model (section order and headings), and render section titles in **bold** using Markdown (e.g., **Experience**). The content under each heading must be plain text (no bold or italics).
-4. Format details:
-   - Contact line under name: Street or city optional; always include email and phone if provided. Use single-line format: Home Street Address • City, State Zip • email • phone
-   - Dates: Month Year – Month Year (e.g., April 2020 – August 2023). If only years present, use Year – Year.
-   - Bullets: use "• " for each bullet, begin with an action verb, no personal pronouns, phrase-style (not full sentences).
-   - Keep the entire CV concise: 1 page for early-career, 2 pages maximum for mid-senior. If cv_content indicates >10 years experience, two pages allowed.
-5. Tailoring guidance:
-   - Integrate exact job_description keywords into the Skills & Interests and Technical lines when they are present in cv_content.
-   - Reword candidate bullets to mirror the job's language (e.g., "built scalable data pipeline" → "designed and deployed scalable data pipelines using X" if candidate used X).
-   - Where candidate-provided metrics exist, preserve them and highlight them early in the bullet.
-6. Preservation & minimal editing:
-   - Do not change company names, job titles, or dates except to normalize date formatting.
-   - You may rephrase descriptions for clarity and impact, combine or split bullets, and remove clearly irrelevant bullets to increase focus.
-7. Tone and content:
-   - Professional and factual. Avoid hyperbole and marketing-speak (e.g., avoid "world-class", "unmatched", "best-in-class").
-   - Point strengths and weaknesses of the final CV only if the user explicitly requests a critique. (Default: do not append critique.)
-8. Output constraints:
-   - Return ONLY the formatted CV text following the Harvard template exact structure and Markdown bold section headers.
-   - Do NOT include any analysis, notes, or debugging text in the output.
-   - If the input cv_content is missing essential sections that prevent producing a meaningful CV (e.g., no experience and no education), produce a minimal Harvard-formatted CV using available fields and leave missing sections out.
+1. Do NOT invent facts. Never create company names, job titles, dates, metrics, or certifications that do not appear in cv_content.  
+   If a required fact is missing, omit it or use a neutral placeholder like "[not provided]".  
+   Do not insert numeric metrics unless the user explicitly provided them.
 
-Additional useful resources for your generation (do not print these unless requested):
-- Action verb examples: led, designed, implemented, launched, reduced, increased, automated, evaluated, negotiated, coached, scaled, optimized.
-- Quantifier guidance: always preserve exact numbers from cv_content; do not invent estimates.
+2. Editing and preservation policy:
+   - Preserve all user-provided experience, skills, and achievements.  
+     You may rephrase, merge duplicates, or slightly reorganize, but **do not delete any content** unless it is truly empty or redundant.
+   - Preserve the original order of roles (most recent first) and their content.  
+     Within each role, you may move up to 2–3 of the most relevant bullets to the top of that section if it improves focus.
+   - If a bullet seems weakly related to the target role, move it to a short **Other Experience** subsection rather than removing it.
+
+3. Tailoring process (apply these steps in order):
+   a. Parse the job_description (or job_title/company) and extract up to 12 high-priority keywords, skills, and competencies (technical skills, tools, seniority verbs, metrics, domain words).  
+   b. Match those to entries in cv_content and tag which experiences, skills, and achievements are relevant.  
+   c. Convert responsibility statements into achievement-focused bullet points using the formula:  
+      **Action verb + what you did + result/impact** (quantify when the candidate provided numbers).  
+   d. Reorder bullets so the most relevant appear first within each role (limit to top 2–3 bullets moved).  
+   e. Reword bullets and summaries to naturally reflect the job’s terminology while keeping the candidate’s true experience and tools.
+
+4. Format rules:
+   - Use the Harvard CV structure exactly as the layout model (section order and headings).  
+     Render section titles in **bold** using Markdown (e.g., **Experience**).  
+     The content under each heading must be plain text (no bold or italics).
+   - Contact line under name: one line including email and phone; city optional.  
+     Example: City, State Zip • email • phone
+   - Dates: Month Year – Month Year (e.g., April 2020 – August 2023). If only years are present, use Year – Year.
+   - Bullets: use "• " for each bullet, begin with an action verb, no personal pronouns, phrase-style (not full sentences).
+   - CV length: 1 page for early-career, up to 2 pages for mid/senior profiles (>10 years of experience).
+
+5. Tailoring guidance:
+   - Integrate relevant keywords into the **Summary** and **Skills & Interests** sections where those skills already exist in cv_content.  
+   - Reword candidate bullets to mirror the job’s phrasing where accurate (e.g., “built scalable data pipeline” → “designed and deployed scalable data pipelines using X”).  
+   - Preserve and emphasize all candidate-provided metrics.  
+   - Do not exaggerate or introduce claims not in cv_content.
+
+6. Preservation & minimal editing:
+   - Do not change company names, job titles, or dates except to normalize formatting.  
+   - Rephrase for clarity and impact, merge only true duplicates, and move less-relevant items to **Other Experience** instead of deleting them.
+
+7. Tone and content:
+   - Professional, factual, and concise.  
+   - Avoid hyperbole or marketing phrases such as “world-class” or “best-in-class.”  
+   - Do not use personal pronouns (“I”, “my”, “we”).
+
+8. Output constraints:
+   - Return ONLY the formatted CV text following the Harvard template with Markdown bold section headers.  
+   - Do NOT include any commentary, reasoning, or analysis in the output.  
+   - If cv_content lacks essential sections (e.g., no experience or education), produce a minimal CV using the available fields and omit the missing ones.
 
 Now: Using the Harvard CV template shown below, convert cv_content into that exact layout while applying the steps above and tailoring to:
 Job Title: {job_title}
@@ -1531,15 +1836,15 @@ Concise 3–4 line paragraph summarizing the candidate’s most relevant experie
 
 **Experience**
 
-ORGANIZATION City, State
-Position Title Month Year – Month Year
+Position Title
+ORGANIZATION City, State Month Year – Month Year
 • Beginning with your most recent position, describe your experience, skills, and resulting outcomes in bullet or paragraph form.
 • Begin each line with an action verb and include details that will help the reader understand your accomplishments, skills, knowledge, abilities, or achievements.
 • Quantify where possible.
 • Do not use personal pronouns; each line should be a phrase rather than full sentence.
 
-ORGANIZATION City, State
-Position Title Month Year – Month Year
+Position Title 
+ORGANIZATION City, State Month Year – Month Year
 • [repeat format for each role]
 
 **Education**
@@ -1579,6 +1884,11 @@ CV DATA TO CONVERT:
         # Extract the formatted CV text
         cv_text = response.content.strip()
         
+        # Check for empty CV text
+        if not cv_text:
+            print("❌ Error: Empty CV text generated")
+            return ""
+        
         # Create filename for PDF
         safe_company = re.sub(r'[^\w\s-]', '', company).strip()
         safe_title = re.sub(r'[^\w\s-]', '', job_title).strip()
@@ -1593,48 +1903,63 @@ CV DATA TO CONVERT:
         
         # Generate PDF using reportlab
         from reportlab.lib.pagesizes import letter
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import inch
-        
-        # Create PDF document
-        doc = SimpleDocTemplate(str(pdf_path), pagesize=letter)
+        from reportlab.lib import colors
+        from xml.sax.saxutils import escape
+
+        doc = SimpleDocTemplate(str(pdf_path), pagesize=letter,
+                                topMargin=0.75*inch, bottomMargin=0.75*inch,
+                                leftMargin=0.75*inch, rightMargin=0.75*inch)
+
         styles = getSampleStyleSheet()
+
+        # --- Define clean visual hierarchy with unique names ---
+        # Only add styles if they don't already exist
+        cv_styles = {
+            'CVSectionHeader': ParagraphStyle(name='CVSectionHeader', fontName='Helvetica-Bold',
+                                            fontSize=12, spaceBefore=6, spaceAfter=3, leading=12),
+            'CVJobTitle': ParagraphStyle(name='CVJobTitle', fontName='Helvetica-Bold',
+                                        fontSize=10.5, spaceBefore=3, spaceAfter=1),
+            'CVOrgDates': ParagraphStyle(name='CVOrgDates', fontName='Helvetica-Oblique',
+                                        fontSize=9.5, textColor=colors.grey, spaceAfter=2),
+            'CVBullet': ParagraphStyle(name='CVBullet', fontName='Helvetica',
+                                      fontSize=10, leftIndent=18, leading=11, spaceAfter=1),
+            'CVBodyText': ParagraphStyle(name='CVBodyText', fontName='Helvetica',
+                                         fontSize=10, leading=11, spaceAfter=2)
+        }
         
-        # Create custom style for the CV
-        cv_style = ParagraphStyle(
-            'CVStyle',
-            parent=styles['Normal'],
-            fontSize=10,
-            leading=12,
-            leftIndent=0,
-            rightIndent=0,
-            spaceAfter=6,
-            fontName='Helvetica'
-        )
-        
-        # Split the CV text into paragraphs and create PDF content
+        # Add styles only if they don't exist
+        for style_name, style_obj in cv_styles.items():
+            if style_name not in styles:
+                styles.add(style_obj)
+
         story = []
-        lines = cv_text.split('\n')
-        
+        lines = [l.strip() for l in cv_text.split('\n') if l.strip()]
+        current_section = None
+
         for line in lines:
-            line = line.strip()
-            if line:
-                # Handle different formatting based on content
-                if line.startswith('**') and line.endswith('**'):  # Markdown bold section headers
-                    section_title = line[2:-2]  # Remove ** markers
-                    p = Paragraph(f"<b>{section_title}</b>", cv_style)
-                elif line.isupper() and len(line) > 3:  # Fallback for uppercase section headers
-                    p = Paragraph(f"<b>{line}</b>", cv_style)
-                elif line.startswith('•'):  # Bullet points
-                    p = Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;{line}", cv_style)
-                else:  # Regular text
-                    p = Paragraph(line, cv_style)
-                
-                story.append(p)
+            # --- Section header detection ---
+            if line.startswith('**') and line.endswith('**'):
+                section_title = line[2:-2].strip()
                 story.append(Spacer(1, 3))
-        
-        # Build PDF
+                story.append(Paragraph(escape(section_title), styles['CVSectionHeader']))
+                story.append(HRFlowable(width="100%", thickness=0.6, color=colors.grey, spaceAfter=3))  # Reduced from 6 to 3
+                current_section = section_title
+            elif line.startswith('•'):
+                story.append(Paragraph(escape(line), styles['CVBullet']))
+            elif re.match(r'^[A-Z][A-Za-z0-9\s\-.,/()&]+$', line) and len(line) < 60:
+                # Probably a job title or organization
+                story.append(Paragraph(escape(line), styles['CVJobTitle']))
+            elif re.search(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4}\b', line, re.IGNORECASE) or re.search(r'\d{4}\s*[-–—]\s*(\d{4}|Present)', line):
+                # Likely a date line (e.g., April 2020 – August 2023)
+                story.append(Paragraph(escape(line), styles['CVOrgDates']))
+            else:
+                story.append(Paragraph(escape(line), styles['CVBodyText']))
+
+            story.append(Spacer(1, 1))  # Reduced from 2 to 1
+
         doc.build(story)
         
         return str(pdf_path)
@@ -1684,22 +2009,47 @@ def filter_jobs_with_negative_keywords(jobs: List[dict], negative_keywords: List
     if not negative_keywords:
         return jobs
     
+    # Enhanced negative keywords for leadership roles
+    enhanced_negative_keywords = negative_keywords.copy()
+    
+    # Add common variations and synonyms for entry-level positions
+    additional_negative_keywords = [
+        "intern", "internship", "trainee", "apprentice", "graduate", "fresher", "newbie", "starter",
+        "entry-level", "entry level", "junior", "assistant", "coordinator", "associate",
+        "placement", "work experience", "unpaid", "volunteer", "temp", "temporary",
+        "part-time", "part time", "contract", "freelance", "seasonal", "student"
+    ]
+    
+    enhanced_negative_keywords.extend(additional_negative_keywords)
+    
     filtered_jobs = []
+    excluded_count = 0
     
     for job in jobs:
         title = str(job.get('title', '')).lower().strip()
         company = str(job.get('company', '')).lower().strip()
+        description = str(job.get('description', '')).lower().strip()
         
-        # Check if job title or company contains any negative keywords
+        # Check if job title, company, or description contains any negative keywords
         should_exclude = False
-        for keyword in negative_keywords:
-            if keyword.lower() in title or keyword.lower() in company:
+        matched_keyword = None
+        
+        for keyword in enhanced_negative_keywords:
+            keyword_lower = keyword.lower()
+            if (keyword_lower in title or 
+                keyword_lower in company or 
+                keyword_lower in description):
                 should_exclude = True
+                matched_keyword = keyword
                 break
         
         if not should_exclude:
             filtered_jobs.append(job)
+        else:
+            excluded_count += 1
+            print(f"🚫 Excluded: {job.get('title', 'N/A')} at {job.get('company', 'N/A')} (matched: {matched_keyword})")
     
+    print(f"🔍 Filtered out {excluded_count} jobs with negative keywords")
     return filtered_jobs
 
 def convert_resume():
@@ -1892,6 +2242,8 @@ agent = create_react_agent(
         # CV customization tools
         customize_cv, generate_cv_json, generate_cv_pdf, read_resume_file, list_resume_files, 
         explain_cv_modifications, create_customized_resume,
+        # CV comparison and analysis tools
+        compare_cv_versions, get_cv_file_info,
         # Strategic agentic capabilities (simplified)
         browse_web, reflect_on_information
     ]
@@ -1906,27 +2258,45 @@ def cleanup_chat_memory():
     
     # Keep memory under 100 messages to prevent token overflow
     if len(chat_memory) > 100:
-        # Keep first 10 messages (initial context) and last 50 messages (recent context)
-        important_messages = chat_memory[:10]  # Initial context
-        recent_messages = chat_memory[-50:]    # Recent context
+        # Separate important data from regular messages
+        important_data = []
+        regular_messages = []
         
-        # Remove duplicates and combine
+        for msg in chat_memory:
+            content = msg.get('content', '')
+            # Preserve job results and CV data
+            if ('JOB_RESULTS_DATA:' in content or 
+                'Job search results stored:' in content or
+                'CV_DATA:' in content or
+                'Customized CV created for' in content):
+                important_data.append(msg)
+            else:
+                regular_messages.append(msg)
+        
+        # Keep first 10 regular messages (initial context) and last 30 regular messages (recent context)
+        # Plus all important data
+        if len(regular_messages) > 40:
+            important_regular = regular_messages[:10]  # Initial context
+            recent_regular = regular_messages[-30:]    # Recent context
+            regular_messages = important_regular + recent_regular
+        
+        # Remove duplicates from regular messages
         seen = set()
-        cleaned_memory = []
-        
-        for msg in important_messages + recent_messages:
+        cleaned_regular = []
+        for msg in regular_messages:
             msg_key = f"{msg['role']}:{msg['content'][:100]}"
             if msg_key not in seen:
                 seen.add(msg_key)
-                cleaned_memory.append(msg)
+                cleaned_regular.append(msg)
         
-        chat_memory = cleaned_memory
-        print(f"🧹 Memory cleaned: {len(chat_memory)} messages retained")
+        # Combine important data with cleaned regular messages
+        chat_memory = important_data + cleaned_regular
+        print(f"🧹 Memory cleaned: {len(chat_memory)} messages retained ({len(important_data)} important data, {len(cleaned_regular)} regular messages)")
 
 def get_initial_job_search_prompt():
     """Get the initial job search prompt."""
     # Default flexible prompt
-    default_prompt = """Find AI related job openings in London, UK that were published in the last 24 hours. Only include jobs listed on LinkedIn, Indeed and Google. 
+    default_prompt = """Find AI related job openings in London, UK that were published in the last 24 hours. Only include jobs listed on LinkedIn. 
 
 Then analyze these jobs and find the best matches based on my resume and preferences using similarity matching with keyword reranking. 
 
@@ -1986,9 +2356,30 @@ KEY CAPABILITIES:
 - Find best job matches using AI similarity matching and keyword analysis
 - Create customized CVs for specific job applications
 - Generate professional PDF resumes using Harvard template
+- Compare and analyze CV versions to explain differences
 - Browse the internet for real-time information and market insights
 - Reflect on gathered information to make strategic decisions
 - Plan and execute multi-step workflows autonomously
+
+CV CUSTOMIZATION WORKFLOW (CRITICAL):
+When users ask for CV customization, ALWAYS use the complete workflow:
+1. **create_customized_resume** - This tool handles the ENTIRE process including PDF generation
+   - Use this for ALL CV customization requests (e.g., "Create CV for job #3", "Customize my CV for Google")
+   - This tool automatically: analyzes job requirements → customizes CV → generates JSON → generates PDF
+   - DO NOT use individual tools like customize_cv, generate_cv_json, generate_cv_pdf separately
+   - The create_customized_resume tool ensures PDF is always created
+
+CV COMPARISON & ANALYSIS TOOLS:
+1. **compare_cv_versions**: Compare original CV with customized versions
+   - Use when user asks about differences between CV versions
+   - Provides detailed section-by-section analysis
+   - Explains strategic reasoning behind modifications
+2. **get_cv_file_info**: Get information about available CV files
+   - Use when user asks about their CV files or wants to see what's available
+   - Shows metadata for original and customized CVs
+3. **explain_cv_modifications**: Detailed modification analysis
+   - Use for in-depth analysis of specific CV changes
+   - Provides modification rationale and impact assessment
 
 STRATEGIC TOOLS (USE SPARINGLY):
 1. **browse_web**: Search the internet for current information
@@ -2007,6 +2398,8 @@ ENHANCED WORKFLOWS (ONLY WHEN REQUESTED):
 - For company research: Use browse_web to gather company information
 - For industry trends: Use browse_web to find current market insights
 - For complex analysis: Use reflect_on_information to provide deeper insights
+- For CV comparisons: Use compare_cv_versions to analyze differences
+- For CV file management: Use get_cv_file_info to show available files
 
 MEMORY INTEGRATION:
 - Job results are stored in memory with detailed information
@@ -2020,6 +2413,14 @@ CRITICAL INSTRUCTIONS:
 - Avoid calling multiple tools in sequence unless absolutely necessary
 - If you have enough information to answer, provide the answer directly
 - Do not chain tools unnecessarily - this can cause recursion errors
+- For CV-related questions, prioritize CV comparison tools over general analysis
+
+CV CUSTOMIZATION REQUESTS (CRITICAL):
+- When user asks for CV customization (any variation), ALWAYS use create_customized_resume tool
+- Examples: "Create CV for job #3", "Customize my CV for Google", "Make a resume for this job"
+- This ensures PDF is always generated along with JSON
+- DO NOT use customize_cv, generate_cv_json, or generate_cv_pdf individually
+- The create_customized_resume tool handles the complete workflow automatically
 
 Be strategic and helpful, but efficient. Use the right tool for the right job."""
     
@@ -2184,7 +2585,9 @@ def chatbot_mode():
             print("\n📚 I can help you with:")
             print("• Job search and analysis: 'Find AI jobs in London', 'Show me the top jobs'")
             print("• CV customization: 'Create a CV for job #3', 'Customize my CV for [company]'")
-            print("• CV analysis: 'Compare my CVs', 'Explain the modifications', 'List my resumes'")
+            print("• CV comparison: 'Compare my original CV with customized version'")
+            print("• CV analysis: 'Explain the differences between my CVs', 'List my resumes'")
+            print("• CV file management: 'Show me all my CV files', 'What changes were made?'")
             print("• Career advice: 'What skills should I highlight?', 'How can I improve my CV?'")
             print("• General queries: Ask me anything about the jobs or your career!")
             continue

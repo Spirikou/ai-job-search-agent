@@ -598,14 +598,18 @@ def display_job_results(jobs_data: List[Dict[str, Any]]):
     
     st.markdown("### 📋 Job Search Results")
     
-    # Show top 5 jobs
-    top_jobs = jobs_data[:5]
+    # Create a simple list format
+    job_list = []
     
-    for i, job in enumerate(top_jobs):
+    for i, job in enumerate(jobs_data):
         # Format score as percentage
         score = job.get('score', 0)
         if isinstance(score, (int, float)):
-            score_display = f"{score:.1f}%" if score <= 1 else f"{score:.1f}%"
+            # Handle both decimal (0.85) and percentage (85) formats
+            if score <= 1:
+                score_display = f"{score * 100:.1f}%"
+            else:
+                score_display = f"{score:.1f}%"
         else:
             score_display = str(score)
         
@@ -625,28 +629,17 @@ def display_job_results(jobs_data: List[Dict[str, Any]]):
         else:
             date_display = 'N/A'
         
-        st.markdown(f"""
-        <div class="job-card">
-            <h4>{i+1}. {job.get('title', 'N/A')} at {job.get('company', 'N/A')}</h4>
-            <p><strong>Location:</strong> {job.get('location', 'N/A')}</p>
-            <p><strong>Date Posted:</strong> {date_display}</p>
-            <p><strong>Match Score:</strong> {score_display}</p>
-            <p><strong>URL:</strong> {job.get('url', 'N/A')}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Action buttons
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button(f"📄 Create CV for this job", key=f"cv_{i}"):
-                create_cv_for_job(job)
-        
-        with col2:
-            if st.button(f"📋 Get more details", key=f"details_{i}"):
-                get_job_details(job)
-        
-        st.divider()
+        # Create job entry with clickable link
+        job_url = job.get('url', 'N/A')
+        if job_url and job_url != 'N/A':
+            job_entry = f"{i+1}. **[{job.get('title', 'N/A')}]({job_url})** at {job.get('company', 'N/A')} | {job.get('location', 'N/A')} | {date_display} | Match: {score_display}"
+        else:
+            job_entry = f"{i+1}. **{job.get('title', 'N/A')}** at {job.get('company', 'N/A')} | {job.get('location', 'N/A')} | {date_display} | Match: {score_display}"
+        job_list.append(job_entry)
+    
+    # Display all jobs in a single cell
+    st.markdown("**All Job Opportunities:**")
+    st.markdown("\n".join(job_list))
 
 def create_cv_for_job(job: Dict[str, Any]):
     """Create customized CV for a specific job with enhanced progress indication and display."""
@@ -928,52 +921,6 @@ def build_readable_cv(cv_data: Dict[str, Any]) -> str:
     
     return '\n'.join(cv_text)
 
-def get_job_details(job: Dict[str, Any]):
-    """Get detailed information about a job."""
-    job_title = job.get('title', 'N/A')
-    company = job.get('company', 'N/A')
-    
-    # Format score as percentage
-    score = job.get('score', 0)
-    if isinstance(score, (int, float)):
-        score_display = f"{score:.1f}%" if score <= 1 else f"{score:.1f}%"
-    else:
-        score_display = str(score)
-    
-    # Format date
-    date_posted = job.get('date_posted', 'N/A')
-    if date_posted and date_posted != 'N/A':
-        try:
-            from datetime import datetime
-            if isinstance(date_posted, str):
-                date_obj = datetime.strptime(date_posted, '%Y-%m-%d')
-                date_display = date_obj.strftime('%B %d, %Y')
-            else:
-                date_display = str(date_posted)
-        except:
-            date_display = str(date_posted)
-    else:
-        date_display = 'N/A'
-    
-    details = f"""
-    **Job Details:**
-    - Title: {job_title}
-    - Company: {company}
-    - Location: {job.get('location', 'N/A')}
-    - Date Posted: {date_display}
-    - Match Score: {score_display}
-    - URL: {job.get('url', 'N/A')}
-    
-    **Description:**
-    {job.get('description', 'N/A')[:500]}...
-    """
-    
-    st.session_state.chat_history.append({
-        'role': 'assistant',
-        'content': details,
-        'timestamp': datetime.now().isoformat()
-    })
-    st.rerun()
 
 def handle_cv_creation_request(user_input: str) -> bool:
     """Handle CV creation requests from chat input. Returns True if handled."""
@@ -1044,9 +991,16 @@ def main():
         if st.session_state.workflow_step == "chat":
             st.markdown("### 💬 AI Assistant Chat")
             
-            # Add helpful tips for CV creation
+            # Add helpful tips for CV creation and comparison
             if not st.session_state.chat_history:
-                st.info("💡 **Tip:** You can ask me to create customized CVs! Try saying: 'Create a CV for Software Engineer at Google' or 'Generate a resume for Data Scientist at Microsoft'")
+                st.info("""
+                💡 **Tips for CV Management:**
+                - **Create CVs:** "Create a CV for Software Engineer at Google"
+                - **Compare CVs:** "Compare my original CV with the customized version"
+                - **Analyze Changes:** "Explain the differences between my CVs"
+                - **List CVs:** "Show me all my CV files"
+                - **Get Details:** "What changes were made to my CV for the Google job?"
+                """)
             
             # Display chat history
             for message in st.session_state.chat_history:
@@ -1231,11 +1185,34 @@ def main():
                 st.markdown("### 📄 Step 1: Resume Upload")
                 st.markdown("Upload your resume in PDF format. You can use any filename - it will be automatically processed.")
                 
-                # File upload
+                # File upload with custom styling
+                st.markdown("""
+                <style>
+                .stFileUploader > div {
+                    background-color: var(--bg-secondary);
+                    border: 2px dashed var(--border-color);
+                    border-radius: 0.8rem;
+                    padding: 1rem;
+                    text-align: center;
+                    transition: all 0.3s ease;
+                    min-height: 80px;
+                }
+                .stFileUploader > div:hover {
+                    border-color: var(--accent-primary);
+                    background-color: rgba(0, 212, 255, 0.05);
+                }
+                .stFileUploader label {
+                    font-size: 0.9rem !important;
+                    color: #000000 !important;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+                
                 uploaded_file = st.file_uploader(
-                    "Choose a PDF resume file",
+                    "📄 Upload Resume (PDF)",
                     type=['pdf'],
-                    help="Upload your resume in PDF format. Any filename is accepted."
+                    help="Drag & drop your PDF resume here or click to browse",
+                    label_visibility="collapsed"
                 )
                 
                 if uploaded_file is not None:
@@ -1405,8 +1382,16 @@ def main():
                                 'timestamp': datetime.now().isoformat()
                             })
                             
-                            # Job search completed - results are in the response
-                            st.session_state.jobs_data = []
+                            # Try to load job results from the generated file
+                            try:
+                                job_results_path = Path("data") / "job_results_v5.json"
+                                if job_results_path.exists():
+                                    with open(job_results_path, 'r', encoding='utf-8') as f:
+                                        job_data = json.load(f)
+                                        st.session_state.jobs_data = job_data.get('jobs', [])
+                            except Exception as e:
+                                print(f"⚠️ Could not load job results: {e}")
+                                st.session_state.jobs_data = []
                             
                             # Automatically move to results step and display jobs
                             st.session_state.workflow_step = "results"
@@ -1430,22 +1415,22 @@ def main():
                     display_job_results(st.session_state.jobs_data)
                     
                     st.markdown("---")
-                    st.markdown("### 💬 Next Steps")
+                    st.markdown("### 💬 Ready to Chat!")
                     st.markdown("You can now:")
                     st.markdown("- Ask questions about specific jobs")
                     st.markdown("- Request customized CVs for job applications")
                     st.markdown("- Get career advice and insights")
                     st.markdown("- Analyze job requirements in detail")
                     
-                    if st.button("💬 Start Chatting", use_container_width=True):
-                        st.session_state.workflow_step = "chat"
-                        st.rerun()
+                    # Auto-transition to chat mode
+                    st.session_state.workflow_step = "chat"
+                    st.rerun()
                 else:
                     st.info("Job search completed! Check the chat for results and use the chat to ask questions or create customized CVs.")
                     
-                    if st.button("💬 Start Chatting", use_container_width=True):
-                        st.session_state.workflow_step = "chat"
-                        st.rerun()
+                    # Auto-transition to chat mode
+                    st.session_state.workflow_step = "chat"
+                    st.rerun()
     
     # Right sidebar with workflow steps
     with col2:
