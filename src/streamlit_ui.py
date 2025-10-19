@@ -367,6 +367,53 @@ def initialize_session_state():
 # UTILITY FUNCTIONS
 # ============================================================================
 
+def get_latest_cv_files():
+    """Get the latest CV files (PDF and JSON) with error handling."""
+    try:
+        data_dir = Path("data")
+        if not data_dir.exists():
+            return None, None, "Data directory not found"
+        
+        # Get latest PDF file
+        pdf_files = list(data_dir.glob("Resume_*.pdf"))
+        latest_pdf = max(pdf_files, key=lambda x: x.stat().st_mtime) if pdf_files else None
+        
+        # Get latest JSON file
+        json_files = list(data_dir.glob("CV_*.json"))
+        latest_json = max(json_files, key=lambda x: x.stat().st_mtime) if json_files else None
+        
+        return latest_pdf, latest_json, None
+        
+    except Exception as e:
+        return None, None, f"Error accessing CV files: {e}"
+
+def create_download_button(file_path: Path, file_type: str, label: str, key_suffix: str = ""):
+    """Create a download button with proper error handling."""
+    if not file_path or not file_path.exists():
+        st.info(f"📄 No {file_type} file available")
+        return False
+    
+    try:
+        with open(file_path, "rb") as file:
+            file_data = file.read()
+        
+        mime_type = "application/pdf" if file_type.lower() == "pdf" else "application/json"
+        
+        st.download_button(
+            label=label,
+            data=file_data,
+            file_name=file_path.name,
+            mime=mime_type,
+            key=f"download_{file_type.lower()}_{key_suffix}_{datetime.now().timestamp()}",
+            use_container_width=True,
+            help=f"Download the {file_type} file"
+        )
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Error reading {file_type} file: {e}")
+        return False
+
 def upload_resume_file(uploaded_file) -> bool:
     """Upload and process resume PDF file with any name, rename to resume.pdf."""
     try:
@@ -382,10 +429,6 @@ def upload_resume_file(uploaded_file) -> bool:
         resume_path = Path("data") / "resume.pdf"
         resume_path.parent.mkdir(exist_ok=True)
         
-        # Debug information
-        st.info(f"📁 Saving resume to: {resume_path.absolute()}")
-        st.info(f"📁 Data directory exists: {resume_path.parent.exists()}")
-        
         # Remove existing resume.pdf if it exists
         if resume_path.exists():
             resume_path.unlink()
@@ -394,10 +437,8 @@ def upload_resume_file(uploaded_file) -> bool:
             f.write(uploaded_file.getbuffer())
         
         # Verify file was saved
-        if resume_path.exists():
-            st.success(f"✅ Resume saved successfully: {resume_path.absolute()}")
-        else:
-            st.error(f"❌ Failed to save resume to: {resume_path.absolute()}")
+        if not resume_path.exists():
+            st.error("❌ Failed to save resume file.")
             return False
         
         # Convert resume
@@ -416,7 +457,6 @@ def upload_resume_file(uploaded_file) -> bool:
         return True
     except Exception as e:
         st.error(f"Error processing resume: {e}")
-        st.error(f"Error details: {str(e)}")
         return False
 
 def check_resume_file() -> bool:
@@ -558,38 +598,24 @@ def display_chat_message(message: Dict[str, Any]):
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Look for PDF files
-                    pdf_files = list(Path("data").glob("Resume_*.pdf"))
-                    if pdf_files:
-                        latest_pdf = max(pdf_files, key=lambda x: x.stat().st_mtime)
-                        with open(latest_pdf, "rb") as pdf_file:
-                            pdf_data = pdf_file.read()
-                        
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=latest_pdf.name,
-                            mime="application/pdf",
-                            key=f"chat_download_pdf_{datetime.now().timestamp()}",
-                            use_container_width=True
+                    latest_pdf, latest_json, error = get_latest_cv_files()
+                    if error:
+                        st.error(f"❌ {error}")
+                    else:
+                        create_download_button(
+                            latest_pdf,
+                            "PDF",
+                            "📥 Download PDF Resume",
+                            "chat"
                         )
                 
                 with col2:
-                    # Look for JSON files
-                    json_files = list(Path("data").glob("CV_*.json"))
-                    if json_files:
-                        latest_json = max(json_files, key=lambda x: x.stat().st_mtime)
-                        with open(latest_json, "rb") as json_file:
-                            json_data = json_file.read()
-                        
-                        st.download_button(
-                            label="📥 Download JSON",
-                            data=json_data,
-                            file_name=latest_json.name,
-                            mime="application/json",
-                            key=f"chat_download_json_{datetime.now().timestamp()}",
-                            use_container_width=True
-                        )
+                    create_download_button(
+                        latest_json,
+                        "JSON",
+                        "📥 Download JSON Data",
+                        "chat"
+                    )
         else:
             st.markdown(f"""
             <div class="chat-message assistant-message">
@@ -738,38 +764,20 @@ def create_cv_for_job(job: Dict[str, Any]):
             col1, col2 = st.columns(2)
             
             with col1:
-                if pdf_path and Path(pdf_path).exists():
-                    # Read PDF file for download
-                    with open(pdf_path, "rb") as pdf_file:
-                        pdf_data = pdf_file.read()
-                    
-                    st.download_button(
-                        label="📥 Download PDF",
-                        data=pdf_data,
-                        file_name=Path(pdf_path).name,
-                        mime="application/pdf",
-                        key=f"download_pdf_{job_title}_{company}",
-                        use_container_width=True
-                    )
-                else:
-                    st.info("PDF not available")
+                create_download_button(
+                    Path(pdf_path) if pdf_path else None,
+                    "PDF",
+                    "📥 Download PDF Resume",
+                    f"{job_title}_{company}"
+                )
             
             with col2:
-                if json_path and Path(json_path).exists():
-                    # Read JSON file for download
-                    with open(json_path, "rb") as json_file:
-                        json_data = json_file.read()
-                    
-                    st.download_button(
-                        label="📥 Download JSON",
-                        data=json_data,
-                        file_name=Path(json_path).name,
-                        mime="application/json",
-                        key=f"download_json_{job_title}_{company}",
-                        use_container_width=True
-                    )
-                else:
-                    st.info("JSON not available")
+                create_download_button(
+                    Path(json_path) if json_path else None,
+                    "JSON",
+                    "📥 Download JSON Data",
+                    f"{job_title}_{company}"
+                )
             
             # Add to chat history with CV content
             chat_cv_content = f"✅ Customized CV created successfully for {job_title} at {company}!\n\n**CV Content:**\n{cv_content}\n\nDownload options are available above."
@@ -795,7 +803,7 @@ def create_cv_for_job(job: Dict[str, Any]):
             st.rerun()
 
 def get_formatted_cv_content(job_title: str, company: str, json_files: List[Path]) -> str:
-    """Get the formatted CV content using LLM formatting."""
+    """Get the formatted CV content using the same logic as PDF generation for consistency."""
     if not json_files:
         return "CV content not available"
     
@@ -811,52 +819,124 @@ def get_formatted_cv_content(job_title: str, company: str, json_files: List[Path
         
         cv_data = json_data['cv_data']
         
-        # Use LLM to format the CV content for display
+        # Use the same LLM formatting logic as PDF generation for consistency
         from langchain_openai import ChatOpenAI
         
         llm_model = ChatOpenAI(model="gpt-4o-mini")
         
         prompt = f"""
-You are a professional resume formatter. Convert this JSON CV data into a clean, readable format for chat display.
+You are a seasoned career consultant and resume expert who produces ATS-friendly, recruiter-focused CVs tailored to a target job posting.
 
-TARGET JOB: {job_title} at {company}
+Inputs (provided to you):
+- cv_content: a JSON object containing the candidate's existing CV/resume data.
+- job_title: the target job title string.
+- company: the target company string.
 
-CV DATA (JSON):
+Hard rules you MUST follow:
+1. Do NOT invent facts. Never create company names, job titles, dates, metrics, or certifications that do not appear in cv_content.  
+   If a required fact is missing, omit it or use a neutral placeholder like "[not provided]".  
+   Do not insert numeric metrics unless the user explicitly provided them.
+
+2. Editing and preservation policy:
+   - Preserve all user-provided experience, skills, and achievements.  
+     You may rephrase, merge duplicates, or slightly reorganize, but **do not delete any content** unless it is truly empty or redundant.
+   - Preserve the original order of roles (most recent first) and their content.  
+     Within each role, you may move up to 2–3 of the most relevant bullets to the top of that section if it improves focus.
+   - If a bullet seems weakly related to the target role, move it to a short **Other Experience** subsection rather than removing it.
+
+3. Tailoring process (apply these steps in order):
+   a. Parse the job_title/company and extract up to 12 high-priority keywords, skills, and competencies (technical skills, tools, seniority verbs, metrics, domain words).  
+   b. Match those to entries in cv_content and tag which experiences, skills, and achievements are relevant.  
+   c. Convert responsibility statements into achievement-focused bullet points using the formula:  
+      **Action verb + what you did + result/impact** (quantify when the candidate provided numbers).  
+   d. Reorder bullets so the most relevant appear first within each role (limit to top 2–3 bullets moved).  
+   e. Reword bullets and summaries to naturally reflect the job's terminology while keeping the candidate's true experience and tools.
+
+4. Format rules:
+   - Use the Harvard CV structure exactly as the layout model (section order and headings).  
+     Render section titles in **bold** using Markdown (e.g., **Experience**).  
+     The content under each heading must be plain text (no bold or italics).
+   - Contact line under name: one line including email and phone; city optional.  
+     Example: City, State Zip • email • phone
+   - Dates: Month Year – Month Year (e.g., April 2020 – August 2023). If only years are present, use Year – Year.
+   - Bullets: use "• " for each bullet, begin with an action verb, no personal pronouns, phrase-style (not full sentences).
+   - CV length: 1 page for early-career, up to 2 pages for mid/senior profiles (>10 years of experience).
+
+5. Tailoring guidance:
+   - Integrate relevant keywords into the **Summary** and **Skills & Interests** sections where those skills already exist in cv_content.  
+   - Reword candidate bullets to mirror the job's phrasing where accurate (e.g., "built scalable data pipeline" → "designed and deployed scalable data pipelines using X").  
+   - Preserve and emphasize all candidate-provided metrics.  
+   - Do not exaggerate or introduce claims not in cv_content.
+
+6. Preservation & minimal editing:
+   - Do not change company names, job titles, or dates except to normalize formatting.  
+   - Rephrase for clarity and impact, merge only true duplicates, and move less-relevant items to **Other Experience** instead of deleting them.
+
+7. Tone and content:
+   - Professional, factual, and concise.  
+   - Avoid hyperbole or marketing phrases such as "world-class" or "best-in-class."  
+   - Do not use personal pronouns ("I", "my", "we").
+
+8. Output constraints:
+   - Return ONLY the formatted CV text following the Harvard template with Markdown bold section headers.  
+   - Do NOT include any commentary, reasoning, or analysis in the output.  
+   - If cv_content lacks essential sections (e.g., no experience or education), produce a minimal CV using the available fields and omit the missing ones.
+
+Now: Using the Harvard CV template shown below, convert cv_content into that exact layout while applying the steps above and tailoring to:
+Job Title: {job_title}
+Company: {company}
+
+### perfect Harvard CV template (layout to copy exactly) ###
+Your Name
+City, State Zip • name@college.harvard.edu • phone number
+
+**Summary**
+Concise 3–4 line paragraph summarizing the candidate's most relevant experience, core competencies, and tools aligned with the job keywords. Structure: [role/industry experience] + [core strengths] + [key technical skills/tools] + [career goal aligned with company/job]. No pronouns or subjective language.
+
+**Experience**
+
+Position Title
+ORGANIZATION City, State Month Year – Month Year
+• Beginning with your most recent position, describe your experience, skills, and resulting outcomes in bullet or paragraph form.
+• Begin each line with an action verb and include details that will help the reader understand your accomplishments, skills, knowledge, abilities, or achievements.
+• Quantify where possible.
+• Do not use personal pronouns; each line should be a phrase rather than full sentence.
+
+Position Title 
+ORGANIZATION City, State Month Year – Month Year
+• [repeat format for each role]
+
+**Education**
+
+UNIVERSITY
+Degree, Concentration. GPA [Optional] Graduation Date
+Thesis [Optional]
+Relevant Coursework: [Optional]
+
+**Projects **
+
+PROJECT NAME – [Optional brief context or employer]  
+• Action verb + what you did + impact/tools (quantify where possible)  
+• [Repeat bullets for up to 3–4 key projects]  
+
+**Skills & Interests**
+Technical: [List tools/languages present in cv_content and matched to job_description]
+Language: [List foreign languages and proficiency levels if present]
+
+**Certifications **
+
+[List certifications in reverse chronological order exactly as provided. Note "In Progress" if applicable.]  
+
+### end template ###
+
+Convert the provided cv_content into the Harvard layout above, strictly follow formatting rules, avoid fabricating any information, and tailor language to the target job.
+
+CV DATA TO CONVERT:
 {json.dumps(cv_data, indent=2)}
-
-CRITICAL INSTRUCTIONS:
-1. Convert the JSON data into a clean, readable CV format
-2. Use markdown formatting for headers (## for main sections, ### for subsections)
-3. Format experience with company, title, duration, and bullet points
-4. Format skills in organized categories
-5. Format education with degree, institution, and year
-6. Do NOT include the raw JSON data
-7. Do NOT include any analysis or commentary
-8. Return ONLY the formatted CV text
-
-EXAMPLE FORMAT:
-## Summary
-[Summary text here]
-
-## Experience
-### Company Name - Job Title
-Duration: [Start Date - End Date]
-• Achievement 1
-• Achievement 2
-
-## Skills
-### Technical Skills
-• Skill 1, Skill 2, Skill 3
-
-## Education
-### Degree Name
-Institution Name, Year
-
-Now format the provided CV data following this structure.
 """
         
         response = llm_model.invoke([
-            {"role": "system", "content": "You are a professional resume formatter. Convert JSON CV data into clean, readable markdown format. Never include raw JSON in your response."},
+            {"role": "system", "content": "You are a professional resume writer specializing in Harvard CV format. Create clean, professional resumes that follow the template exactly. You can also help users compare and analyze different resume versions using the read_resume_file and list_resume_files tools."},
             {"role": "user", "content": prompt}
         ])
         
@@ -1231,10 +1311,10 @@ def main():
                     if st.button("📤 Upload and Process Resume"):
                         if upload_resume_file(uploaded_file):
                             original_name = uploaded_file.name
-                            st.success(f"✅ Resume '{original_name}' uploaded and processed successfully!")
+                            st.success(f"✅ Resume '{original_name}' loaded successfully!")
                             st.session_state.chat_history.append({
                                 'role': 'system',
-                                'content': f"✅ Resume '{original_name}' uploaded and processed successfully! Please review your preferences.",
+                                'content': f"✅ Resume '{original_name}' loaded successfully! Please review your preferences.",
                                 'timestamp': datetime.now().isoformat()
                             })
                             st.rerun()
