@@ -719,15 +719,15 @@ def create_cv_for_job(job: Dict[str, Any]):
             if not customized_cv:
                 raise Exception("CV customization failed")
             
-            # Step 4: Generate JSON file
-            status_text.text("📄 Generating JSON file...")
-            progress_bar.progress(70)
-            json_path = generate_cv_json(customized_cv, job_title, company)
-            
-            # Step 5: Generate PDF file
+            # Step 4: Generate PDF file first to get formatted text
             status_text.text("📄 Generating PDF document...")
+            progress_bar.progress(70)
+            pdf_path, formatted_cv_text = generate_cv_pdf(customized_cv, job_title, company, job_description)
+            
+            # Step 5: Generate JSON file with formatted text
+            status_text.text("📄 Generating JSON file...")
             progress_bar.progress(90)
-            pdf_path = generate_cv_pdf(customized_cv, job_title, company, job_description)
+            json_path = generate_cv_json(customized_cv, job_title, company, formatted_cv_text)
             
             # Complete progress
             progress_bar.progress(100)
@@ -739,7 +739,7 @@ def create_cv_for_job(job: Dict[str, Any]):
             status_text.empty()
             
             # Get the formatted CV content for display
-            cv_content = get_formatted_cv_content(job_title, company, [Path(json_path)] if json_path else [])
+            cv_content = formatted_cv_text
             
             # Display the customized CV content
             st.markdown("### 📄 Customized CV Preview")
@@ -803,7 +803,7 @@ def create_cv_for_job(job: Dict[str, Any]):
             st.rerun()
 
 def get_formatted_cv_content(job_title: str, company: str, json_files: List[Path]) -> str:
-    """Get the formatted CV content using the same logic as PDF generation for consistency."""
+    """Get the formatted CV content from JSON metadata."""
     if not json_files:
         return "CV content not available"
     
@@ -814,145 +814,21 @@ def get_formatted_cv_content(job_title: str, company: str, json_files: List[Path
         with open(latest_json, 'r', encoding='utf-8') as f:
             json_data = json.load(f)
         
-        if 'cv_data' not in json_data:
-            return "CV data not found in JSON file"
+        # Try to get formatted text from metadata first
+        if 'metadata' in json_data and 'formatted_text' in json_data['metadata']:
+            formatted_text = json_data['metadata']['formatted_text']
+            if formatted_text:
+                return formatted_text
         
-        cv_data = json_data['cv_data']
+        # Fallback to building from cv_data for backward compatibility
+        if 'cv_data' in json_data:
+            return build_readable_cv(json_data['cv_data'])
         
-        # Use the same LLM formatting logic as PDF generation for consistency
-        from langchain_openai import ChatOpenAI
-        
-        llm_model = ChatOpenAI(model="gpt-4o-mini")
-        
-        prompt = f"""
-You are a seasoned career consultant and resume expert who produces ATS-friendly, recruiter-focused CVs tailored to a target job posting.
-
-Inputs (provided to you):
-- cv_content: a JSON object containing the candidate's existing CV/resume data.
-- job_title: the target job title string.
-- company: the target company string.
-
-Hard rules you MUST follow:
-1. Do NOT invent facts. Never create company names, job titles, dates, metrics, or certifications that do not appear in cv_content.  
-   If a required fact is missing, omit it or use a neutral placeholder like "[not provided]".  
-   Do not insert numeric metrics unless the user explicitly provided them.
-
-2. Editing and preservation policy:
-   - Preserve all user-provided experience, skills, and achievements.  
-     You may rephrase, merge duplicates, or slightly reorganize, but **do not delete any content** unless it is truly empty or redundant.
-   - Preserve the original order of roles (most recent first) and their content.  
-     Within each role, you may move up to 2–3 of the most relevant bullets to the top of that section if it improves focus.
-   - If a bullet seems weakly related to the target role, move it to a short **Other Experience** subsection rather than removing it.
-
-3. Tailoring process (apply these steps in order):
-   a. Parse the job_title/company and extract up to 12 high-priority keywords, skills, and competencies (technical skills, tools, seniority verbs, metrics, domain words).  
-   b. Match those to entries in cv_content and tag which experiences, skills, and achievements are relevant.  
-   c. Convert responsibility statements into achievement-focused bullet points using the formula:  
-      **Action verb + what you did + result/impact** (quantify when the candidate provided numbers).  
-   d. Reorder bullets so the most relevant appear first within each role (limit to top 2–3 bullets moved).  
-   e. Reword bullets and summaries to naturally reflect the job's terminology while keeping the candidate's true experience and tools.
-
-4. Format rules:
-   - Use the Harvard CV structure exactly as the layout model (section order and headings).  
-     Render section titles in **bold** using Markdown (e.g., **Experience**).  
-     The content under each heading must be plain text (no bold or italics).
-   - Contact line under name: one line including email and phone; city optional.  
-     Example: City, State Zip • email • phone
-   - Dates: Month Year – Month Year (e.g., April 2020 – August 2023). If only years are present, use Year – Year.
-   - Bullets: use "• " for each bullet, begin with an action verb, no personal pronouns, phrase-style (not full sentences).
-   - CV length: 1 page for early-career, up to 2 pages for mid/senior profiles (>10 years of experience).
-
-5. Tailoring guidance:
-   - Integrate relevant keywords into the **Summary** and **Skills & Interests** sections where those skills already exist in cv_content.  
-   - Reword candidate bullets to mirror the job's phrasing where accurate (e.g., "built scalable data pipeline" → "designed and deployed scalable data pipelines using X").  
-   - Preserve and emphasize all candidate-provided metrics.  
-   - Do not exaggerate or introduce claims not in cv_content.
-
-6. Preservation & minimal editing:
-   - Do not change company names, job titles, or dates except to normalize formatting.  
-   - Rephrase for clarity and impact, merge only true duplicates, and move less-relevant items to **Other Experience** instead of deleting them.
-
-7. Tone and content:
-   - Professional, factual, and concise.  
-   - Avoid hyperbole or marketing phrases such as "world-class" or "best-in-class."  
-   - Do not use personal pronouns ("I", "my", "we").
-
-8. Output constraints:
-   - Return ONLY the formatted CV text following the Harvard template with Markdown bold section headers.  
-   - Do NOT include any commentary, reasoning, or analysis in the output.  
-   - If cv_content lacks essential sections (e.g., no experience or education), produce a minimal CV using the available fields and omit the missing ones.
-
-Now: Using the Harvard CV template shown below, convert cv_content into that exact layout while applying the steps above and tailoring to:
-Job Title: {job_title}
-Company: {company}
-
-### perfect Harvard CV template (layout to copy exactly) ###
-Your Name
-City, State Zip • name@college.harvard.edu • phone number
-
-**Summary**
-Concise 3–4 line paragraph summarizing the candidate's most relevant experience, core competencies, and tools aligned with the job keywords. Structure: [role/industry experience] + [core strengths] + [key technical skills/tools] + [career goal aligned with company/job]. No pronouns or subjective language.
-
-**Experience**
-
-Position Title
-ORGANIZATION City, State Month Year – Month Year
-• Beginning with your most recent position, describe your experience, skills, and resulting outcomes in bullet or paragraph form.
-• Begin each line with an action verb and include details that will help the reader understand your accomplishments, skills, knowledge, abilities, or achievements.
-• Quantify where possible.
-• Do not use personal pronouns; each line should be a phrase rather than full sentence.
-
-Position Title 
-ORGANIZATION City, State Month Year – Month Year
-• [repeat format for each role]
-
-**Education**
-
-UNIVERSITY
-Degree, Concentration. GPA [Optional] Graduation Date
-Thesis [Optional]
-Relevant Coursework: [Optional]
-
-**Projects **
-
-PROJECT NAME – [Optional brief context or employer]  
-• Action verb + what you did + impact/tools (quantify where possible)  
-• [Repeat bullets for up to 3–4 key projects]  
-
-**Skills & Interests**
-Technical: [List tools/languages present in cv_content and matched to job_description]
-Language: [List foreign languages and proficiency levels if present]
-
-**Certifications **
-
-[List certifications in reverse chronological order exactly as provided. Note "In Progress" if applicable.]  
-
-### end template ###
-
-Convert the provided cv_content into the Harvard layout above, strictly follow formatting rules, avoid fabricating any information, and tailor language to the target job.
-
-CV DATA TO CONVERT:
-{json.dumps(cv_data, indent=2)}
-"""
-        
-        response = llm_model.invoke([
-            {"role": "system", "content": "You are a professional resume writer specializing in Harvard CV format. Create clean, professional resumes that follow the template exactly. You can also help users compare and analyze different resume versions using the read_resume_file and list_resume_files tools."},
-            {"role": "user", "content": prompt}
-        ])
-        
-        formatted_content = response.content.strip()
-        
-        # Validate that the response is not just JSON
-        if formatted_content.startswith('{') or 'json' in formatted_content.lower():
-            print("⚠️ LLM returned JSON instead of formatted text, using fallback")
-            return build_readable_cv(cv_data)
-        
-        return formatted_content
+        return "CV data not found in JSON file"
         
     except Exception as e:
-        print(f"❌ Error formatting CV content: {e}")
-        # Fallback to basic formatting if LLM fails
-        return build_readable_cv(cv_data)
+        print(f"❌ Error reading CV content: {e}")
+        return "Error reading CV content"
 
 def build_readable_cv(cv_data: Dict[str, Any]) -> str:
     """Build a readable version of the CV from JSON data."""
