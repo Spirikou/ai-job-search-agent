@@ -1350,12 +1350,7 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         # Step 4: Generate PDF file first to get formatted text
         print("📄 Generating PDF file...")
         try:
-            pdf_path, formatted_cv_text = generate_cv_pdf.invoke({
-                "customized_cv": customized_cv,
-                "job_title": job_title,
-                "company": company,
-                "job_description": job_description
-            })
+            pdf_path, formatted_cv_text = generate_cv_pdf(customized_cv, job_title, company, job_description)
             print(f"✅ PDF generated: {pdf_path}")
         except Exception as pdf_error:
             print(f"❌ PDF generation error: {pdf_error}")
@@ -1364,12 +1359,7 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         # Step 5: Generate JSON file with formatted text
         print("📄 Generating JSON file...")
         try:
-            json_path = generate_cv_json.invoke({
-                "customized_cv": customized_cv,
-                "job_title": job_title,
-                "company": company,
-                "formatted_cv_text": formatted_cv_text
-            })
+            json_path = generate_cv_json(customized_cv, job_title, company, formatted_cv_text)
             print(f"✅ JSON generated: {json_path}")
         except Exception as json_error:
             print(f"❌ JSON generation error: {json_error}")
