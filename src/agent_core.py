@@ -1233,7 +1233,7 @@ def customize_cv(job_requirements: Dict[str, Any], job_title: str, company: str)
 
 
 @tool("generate_cv_json", return_direct=False)
-def generate_cv_json(customized_cv: Dict[str, Any], job_title: str, company: str) -> str:
+def generate_cv_json(customized_cv: Dict[str, Any], job_title: str, company: str, formatted_cv_text: str = None) -> str:
     """
     Generate a JSON file from the customized CV data.
     
@@ -1241,6 +1241,7 @@ def generate_cv_json(customized_cv: Dict[str, Any], job_title: str, company: str
         customized_cv: Customized CV data structure
         job_title: Target job title
         company: Target company
+        formatted_cv_text: Formatted CV text in Harvard format (optional)
     
     Returns:
         Path to generated JSON file
@@ -1265,7 +1266,8 @@ def generate_cv_json(customized_cv: Dict[str, Any], job_title: str, company: str
                 "target_job": job_title,
                 "target_company": company,
                 "version": "core",
-                "description": f"Customized CV for {job_title} at {company}"
+                "description": f"Customized CV for {job_title} at {company}",
+                "formatted_text": formatted_cv_text
             },
             "cv_data": customized_cv
         }
@@ -1345,23 +1347,10 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         if not customized_cv or customized_cv == {}:
             return f"❌ CV customization failed. Please try again or check the job requirements."
         
-        # Step 4: Generate JSON file
-        print("📄 Generating JSON file...")
-        try:
-            json_path = generate_cv_json.invoke({
-                "customized_cv": customized_cv,
-                "job_title": job_title,
-                "company": company
-            })
-            print(f"✅ JSON generated: {json_path}")
-        except Exception as json_error:
-            print(f"❌ JSON generation error: {json_error}")
-            return f"❌ JSON generation failed: {json_error}"
-        
-        # Step 5: Generate PDF file
+        # Step 4: Generate PDF file first to get formatted text
         print("📄 Generating PDF file...")
         try:
-            pdf_path = generate_cv_pdf.invoke({
+            pdf_path, formatted_cv_text = generate_cv_pdf.invoke({
                 "customized_cv": customized_cv,
                 "job_title": job_title,
                 "company": company,
@@ -1372,6 +1361,20 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
             print(f"❌ PDF generation error: {pdf_error}")
             return f"❌ PDF generation failed: {pdf_error}"
         
+        # Step 5: Generate JSON file with formatted text
+        print("📄 Generating JSON file...")
+        try:
+            json_path = generate_cv_json.invoke({
+                "customized_cv": customized_cv,
+                "job_title": job_title,
+                "company": company,
+                "formatted_cv_text": formatted_cv_text
+            })
+            print(f"✅ JSON generated: {json_path}")
+        except Exception as json_error:
+            print(f"❌ JSON generation error: {json_error}")
+            return f"❌ JSON generation failed: {json_error}"
+        
         # Check if files were created successfully
         if not pdf_path or not json_path:
             return f"❌ File generation failed. Please try again."
@@ -1379,11 +1382,7 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         # Step 6: Store in memory
         store_cv_in_memory(customized_cv, job_title, company, pdf_path)
         
-        # Step 7: Generate formatted CV content for display
-        print("📝 Formatting CV content for display...")
-        cv_content = get_formatted_cv_content_for_display(customized_cv, job_title, company)
-        
-        return f"✅ Customized resume created successfully!\n📄 PDF: {pdf_path}\n📁 JSON: {json_path}\n\n**CV Content:**\n{cv_content}\n\nYou can now use this resume for your application to {job_title} at {company}."
+        return f"✅ Customized resume created successfully!\n📄 PDF: {pdf_path}\n📁 JSON: {json_path}\n\n**CV Content:**\n{formatted_cv_text}\n\nYou can now use this resume for your application to {job_title} at {company}."
         
     except Exception as e:
         print(f"❌ Error in create_customized_resume: {e}")
@@ -1980,11 +1979,11 @@ CV DATA TO CONVERT:
 
         doc.build(story)
         
-        return str(pdf_path)
+        return str(pdf_path), cv_text
         
     except Exception as e:
         print(f"❌ Error generating PDF: {e}")
-        return ""
+        return "", ""
 
 def extract_matching_keywords(job_title: str, keywords: Dict[str, List[str]]) -> List[str]:
     """Extract keywords that match the job title, including negative keywords."""
