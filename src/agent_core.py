@@ -62,8 +62,8 @@ def parse_json_response(content: str, error_context: str = "JSON parsing") -> di
         cleaned_content = clean_json_response(content)
         return json.loads(cleaned_content)
     except json.JSONDecodeError as e:
-        print(f"❌ Error in {error_context}: {e}")
-        print(f"❌ Problematic content: {content[:200]}...")
+        print(f"[FAIL] Error in {error_context}: {e}")
+        print(f"[FAIL] Problematic content: {content[:200]}...")
         raise e
 
 def get_data_dir() -> Path:
@@ -179,7 +179,7 @@ def extract_keywords_from_roles(preferred_roles: List[str], llm_model: ChatOpenA
         keywords = parse_json_response(response.content, "keyword extraction")
         return keywords
     except Exception as e:
-        print(f"❌ Error extracting keywords: {e}")
+        print(f"[FAIL] Error extracting keywords: {e}")
         raise e
 
 def compute_keyword_score(job_title: str, keywords: Dict[str, List[str]]) -> float:
@@ -319,7 +319,7 @@ def jobspy_search(
         A list of unique job dictionaries with title, company, location, description, and URL.
     """
     sites = site_name or ["linkedin", "indeed", "google"]
-    print(f"🔍 Searching for ~{results_wanted} jobs...")
+    print(f"[SEARCH] Searching for ~{results_wanted} jobs...")
     
     all_jobs = []
     
@@ -377,12 +377,12 @@ def jobspy_search(
         
         # Remove duplicates across all sites
         unique_jobs = remove_duplicate_jobs(all_jobs)
-        print(f"📋 Found {len(unique_jobs)} jobs")
+        print(f"[INFO] Found {len(unique_jobs)} jobs")
         
         return unique_jobs
         
     except Exception as e:
-        print(f"❌ Search error: {e}")
+        print(f"[FAIL] Search error: {e}")
         return []
 
 @tool("find_best_job_matches", return_direct=False)
@@ -411,14 +411,14 @@ def find_best_job_matches(
     """
     # Remove duplicates before processing
     jobs = remove_duplicate_jobs(jobs)
-    print(f"🧠 Analyzing {len(jobs)} jobs...")
+    print(f"[ANALYZE] Analyzing {len(jobs)} jobs...")
     
     # Save all unfiltered jobs for performance analysis
     save_all_jobs(jobs)
     
     # Debug: Check if we have the required data
     if not jobs:
-        print("❌ No jobs to analyze")
+        print("[FAIL] No jobs to analyze")
         return []
     
     # Use default resume and preferences if not provided
@@ -429,7 +429,7 @@ def find_best_job_matches(
                 resume_data = json.load(open("data/base_cv.json"))
                 resume_text = build_resume_text(resume_data)
             except Exception as e:
-                print(f"❌ Error loading resume: {e}")
+                print(f"[FAIL] Error loading resume: {e}")
                 return []
         else:
             resume_text = build_resume_text(resume)
@@ -441,7 +441,7 @@ def find_best_job_matches(
     try:
         preferred_roles = preferences[0].get("roles", [])
     except Exception as e:
-        print(f"❌ Error loading preferences: {e}")
+        print(f"[FAIL] Error loading preferences: {e}")
         return []
     
     # Initialize models
@@ -454,7 +454,7 @@ def find_best_job_matches(
     # Filter out jobs with negative keywords
     if negative_keywords:
         jobs = filter_jobs_with_negative_keywords(jobs, negative_keywords)
-        print(f"🔍 Filtered to {len(jobs)} relevant jobs")
+        print(f"[SEARCH] Filtered to {len(jobs)} relevant jobs")
     
     # Use global embeddings and vectors if available, otherwise create new ones
     if resume_vec is None or pref_vec is None:
@@ -749,65 +749,143 @@ def plan_next_actions(current_situation: str, goals: str, available_tools: str) 
     return response.content.strip()
 
 def get_formatted_cv_content_for_display(customized_cv: Dict[str, Any], job_title: str, company: str) -> str:
-    """Format CV content for display in chat using LLM."""
+    """
+    Format CV content for display in chat using Harvard CV format (same as PDF format).
+    
+    NOTE: This function generates Harvard format text using LLM. For the main CV workflow,
+    use generate_cv_pdf() which generates both PDF and formatted text together to avoid duplication.
+    This function is primarily for standalone use or as a fallback.
+    """
     try:
         llm_model = get_llm_model()
         
         prompt = f"""
-        You are a professional resume formatter. Convert this JSON CV data into a clean, readable format for chat display.
-        
-        TARGET JOB: {job_title} at {company}
-        
-        CV DATA (JSON):
-        {json.dumps(customized_cv, indent=2)}
-        
-        CRITICAL INSTRUCTIONS:
-        1. Convert the JSON data into a clean, readable CV format
-        2. Use markdown formatting for headers (## for main sections, ### for subsections)
-        3. Format experience with company, title, duration, and bullet points
-        4. Format skills in organized categories
-        5. Format education with degree, institution, and year
-        6. Do NOT include the raw JSON data
-        7. Do NOT include any analysis or commentary
-        8. Return ONLY the formatted CV text
-        
-        EXAMPLE FORMAT:
-        ## Summary
-        [Summary text here]
-        
-        ## Experience
-        ### Company Name - Job Title
-        Duration: [Start Date - End Date]
-        • Achievement 1
-        • Achievement 2
-        
-        ## Skills
-        ### Technical Skills
-        • Skill 1, Skill 2, Skill 3
-        
-        ## Education
-        ### Degree Name
-        Institution Name, Year
-        
-        Now format the provided CV data following this structure.
-        """
+You are a seasoned career consultant and resume expert who produces ATS-friendly, recruiter-focused CVs tailored to a target job posting.
+
+Inputs (provided to you):
+- cv_content: a JSON object containing the candidate's existing CV/resume data.
+- job_title: the target job title string.
+- company: the target company string.
+
+Hard rules you MUST follow:
+1. Do NOT invent facts. Never create company names, job titles, dates, metrics, or certifications that do not appear in cv_content.  
+   If a required fact is missing, omit it or use a neutral placeholder like "[not provided]".  
+   Do not insert numeric metrics unless the user explicitly provided them.
+
+2. Editing and preservation policy:
+   - Preserve all user-provided experience, skills, and achievements.  
+     You may rephrase, merge duplicates, or slightly reorganize, but **do not delete any content** unless it is truly empty or redundant.
+   - Preserve the original order of roles (most recent first) and their content.  
+     Within each role, you may move up to 2–3 of the most relevant bullets to the top of that section if it improves focus.
+   - If a bullet seems weakly related to the target role, move it to a short **Other Experience** subsection rather than removing it.
+
+3. Tailoring process (apply these steps in order):
+   a. Parse the job_title and company and extract up to 12 high-priority keywords, skills, and competencies (technical skills, tools, seniority verbs, metrics, domain words).  
+   b. Match those to entries in cv_content and tag which experiences, skills, and achievements are relevant.  
+   c. Convert responsibility statements into achievement-focused bullet points using the formula:  
+      **Action verb + what you did + result/impact** (quantify when the candidate provided numbers).  
+   d. Reorder bullets so the most relevant appear first within each role (limit to top 2–3 bullets moved).  
+   e. Reword bullets and summaries to naturally reflect the job's terminology while keeping the candidate's true experience and tools.
+
+4. Format rules:
+   - Use the Harvard CV structure exactly as the layout model (section order and headings).  
+     Render section titles in **bold** using Markdown (e.g., **Experience**).  
+     The content under each heading must be plain text (no bold or italics).
+   - Contact line under name: one line including email and phone; city optional.  
+     Example: City, State Zip • email • phone
+   - Dates: Month Year – Month Year (e.g., April 2020 – August 2023). If only years are present, use Year – Year.
+   - Bullets: use "• " for each bullet, begin with an action verb, no personal pronouns, phrase-style (not full sentences).
+   - CV length: 1 page for early-career, up to 2 pages for mid/senior profiles (>10 years of experience).
+
+5. Tailoring guidance:
+   - Integrate relevant keywords into the **Summary** and **Skills & Interests** sections where those skills already exist in cv_content.  
+   - Reword candidate bullets to mirror the job's phrasing where accurate (e.g., "built scalable data pipeline" → "designed and deployed scalable data pipelines using X").  
+   - Preserve and emphasize all candidate-provided metrics.  
+   - Do not exaggerate or introduce claims not in cv_content.
+
+6. Preservation & minimal editing:
+   - Do not change company names, job titles, or dates except to normalize formatting.  
+   - Rephrase for clarity and impact, merge only true duplicates, and move less-relevant items to **Other Experience** instead of deleting them.
+
+7. Tone and content:
+   - Professional, factual, and concise.  
+   - Avoid hyperbole or marketing phrases such as "world-class" or "best-in-class."  
+   - Do not use personal pronouns ("I", "my", "we").
+
+8. Output constraints:
+   - Return ONLY the formatted CV text following the Harvard template with Markdown bold section headers.  
+   - Do NOT include any commentary, reasoning, or analysis in the output.  
+   - If cv_content lacks essential sections (e.g., no experience or education), produce a minimal CV using the available fields and omit the missing ones.
+
+Now: Using the Harvard CV template shown below, convert cv_content into that exact layout while applying the steps above and tailoring to:
+Job Title: {job_title}
+Company: {company}
+
+### perfect Harvard CV template (layout to copy exactly) ###
+Your Name
+City, State Zip • name@college.harvard.edu • phone number
+
+**Summary**
+Concise 3–4 line paragraph summarizing the candidate's most relevant experience, core competencies, and tools aligned with the job keywords. Structure: [role/industry experience] + [core strengths] + [key technical skills/tools] + [career goal aligned with company/job]. No pronouns or subjective language.
+
+**Experience**
+
+Position Title
+ORGANIZATION City, State Month Year – Month Year
+• Beginning with your most recent position, describe your experience, skills, and resulting outcomes in bullet or paragraph form.
+• Begin each line with an action verb and include details that will help the reader understand your accomplishments, skills, knowledge, abilities, or achievements.
+• Quantify where possible.
+• Do not use personal pronouns; each line should be a phrase rather than full sentence.
+
+Position Title 
+ORGANIZATION City, State Month Year – Month Year
+• [repeat format for each role]
+
+**Education**
+
+UNIVERSITY
+Degree, Concentration. GPA [Optional] Graduation Date
+Thesis [Optional]
+Relevant Coursework: [Optional]
+
+**Projects **
+
+PROJECT NAME – [Optional brief context or employer]  
+• Action verb + what you did + impact/tools (quantify where possible)  
+• [Repeat bullets for up to 3–4 key projects]  
+
+**Skills & Interests**
+Technical: [List tools/languages present in cv_content and matched to job_title]
+Language: [List foreign languages and proficiency levels if present]
+
+**Certifications **
+
+[List certifications in reverse chronological order exactly as provided. Note "In Progress" if applicable.]  
+
+### end template ###
+
+Convert the provided cv_content into the Harvard layout above, strictly follow formatting rules, avoid fabricating any information, and tailor language to the target job.
+
+CV DATA TO CONVERT:
+{json.dumps(customized_cv, indent=2)}
+"""
         
         response = llm_model.invoke([
-            {"role": "system", "content": "You are a professional resume formatter. Convert JSON CV data into clean, readable markdown format. Never include raw JSON in your response."},
+            {"role": "system", "content": "You are a professional resume writer specializing in Harvard CV format. Create clean, professional resumes that follow the template exactly."},
             {"role": "user", "content": prompt}
         ])
         
         formatted_content = response.content.strip()
         
-        # Validate that the response is not just JSON
-        if formatted_content.startswith('{') or 'json' in formatted_content.lower():
-            print("⚠️ LLM returned JSON instead of formatted text, using fallback")
+        # Check for empty CV text
+        if not formatted_content:
+            print("[FAIL] Error: Empty CV text generated")
             return build_readable_cv_fallback(customized_cv)
         
         return formatted_content
         
     except Exception as e:
-        print(f"❌ Error formatting CV content: {e}")
+        print(f"[FAIL] Error formatting CV content: {e}")
         # Fallback to basic formatting if LLM fails
         return build_readable_cv_fallback(customized_cv)
 
@@ -1065,7 +1143,7 @@ def fetch_job_description(job_url: str) -> str:
         return text[:5000]  # Limit to 5000 characters to prevent context overflow
         
     except Exception as e:
-        print(f"❌ Error fetching job description from {job_url}: {e}")
+        print(f"[FAIL] Error fetching job description from {job_url}: {e}")
         return f"Job description not available. Error: {str(e)}"
 
 @tool("analyze_job_requirements", return_direct=False)
@@ -1128,7 +1206,7 @@ def analyze_job_requirements(job_description: str, job_title: str, company: str)
         return requirements
         
     except Exception as e:
-        print(f"❌ Error analyzing job requirements: {e}")
+        print(f"[FAIL] Error analyzing job requirements: {e}")
         return {
             "technical_skills": [],
             "soft_skills": [],
@@ -1159,7 +1237,7 @@ def customize_cv(job_requirements: Dict[str, Any], job_title: str, company: str)
         with open("data/base_cv.json", 'r', encoding='utf-8') as f:
             original_cv = json.load(f)
     except Exception as e:
-        print(f"❌ Error loading original CV: {e}")
+        print(f"[FAIL] Error loading original CV: {e}")
         return {}
     
     llm_model = get_llm_model()
@@ -1210,7 +1288,7 @@ def customize_cv(job_requirements: Dict[str, Any], job_title: str, company: str)
         return customized_cv
         
     except json.JSONDecodeError as e:
-        print(f"❌ JSON parsing error: {e}")
+        print(f"[FAIL] JSON parsing error: {e}")
         
         # Try to fix common JSON issues
         try:
@@ -1222,13 +1300,13 @@ def customize_cv(job_requirements: Dict[str, Any], job_title: str, company: str)
             
             # Try parsing again
             customized_cv = json.loads(content)
-            print("✅ Successfully parsed JSON after cleanup")
+            print("[PASS] Successfully parsed JSON after cleanup")
             return customized_cv
         except:
-            print("❌ Could not fix JSON, returning original CV")
+            print("[FAIL] Could not fix JSON, returning original CV")
             return original_cv
     except Exception as e:
-        print(f"❌ Error customizing CV: {e}")
+        print(f"[FAIL] Error customizing CV: {e}")
         return original_cv
 
 
@@ -1279,7 +1357,7 @@ def generate_cv_json(customized_cv: Dict[str, Any], job_title: str, company: str
         return str(json_path)
         
     except Exception as e:
-        print(f"❌ Error generating JSON: {e}")
+        print(f"[FAIL] Error generating JSON: {e}")
         return ""
 
 @tool("read_resume_file", return_direct=False)
@@ -1289,7 +1367,7 @@ def read_resume_file(file_path: str) -> Dict[str, Any]:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        print(f"❌ Error reading resume file: {e}")
+        print(f"[FAIL] Error reading resume file: {e}")
         return {}
 
 
@@ -1301,7 +1379,7 @@ def list_resume_files() -> List[str]:
         return [str(file_path) for file_path in data_dir.glob("*.json") 
                 if "cv" in file_path.name.lower() or "resume" in file_path.name.lower()]
     except Exception as e:
-        print(f"❌ Error listing resume files: {e}")
+        print(f"[FAIL] Error listing resume files: {e}")
         return []
 
 @tool("create_customized_resume", return_direct=False)
@@ -1347,36 +1425,61 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
         if not customized_cv or customized_cv == {}:
             return f"❌ CV customization failed. Please try again or check the job requirements."
         
-        # Step 4: Generate PDF file first to get formatted text
-        print("📄 Generating PDF file...")
-        try:
-            pdf_path, formatted_cv_text = generate_cv_pdf(customized_cv, job_title, company, job_description)
-            print(f"✅ PDF generated: {pdf_path}")
-        except Exception as pdf_error:
-            print(f"❌ PDF generation error: {pdf_error}")
-            return f"❌ PDF generation failed: {pdf_error}"
-        
-        # Step 5: Generate JSON file with formatted text
+        # Step 4: Generate JSON file
         print("📄 Generating JSON file...")
         try:
-            json_path = generate_cv_json(customized_cv, job_title, company, formatted_cv_text)
+            json_path = generate_cv_json.invoke({
+                "customized_cv": customized_cv,
+                "job_title": job_title,
+                "company": company
+            })
             print(f"✅ JSON generated: {json_path}")
         except Exception as json_error:
             print(f"❌ JSON generation error: {json_error}")
             return f"❌ JSON generation failed: {json_error}"
         
+        # Step 5: Generate PDF file
+        print("📄 Generating PDF file...")
+        try:
+            pdf_result = generate_cv_pdf.invoke({
+                "customized_cv": customized_cv,
+                "job_title": job_title,
+                "company": company,
+                "job_description": job_description
+            })
+            
+            # Handle tuple return (pdf_path, cv_text) or single value
+            if isinstance(pdf_result, tuple):
+                pdf_path, cv_text_from_pdf = pdf_result
+            else:
+                pdf_path = pdf_result
+                cv_text_from_pdf = None
+            
+            print(f"✅ PDF generated: {pdf_path}")
+        except Exception as pdf_error:
+            print(f"❌ PDF generation error: {pdf_error}")
+            return f"❌ PDF generation failed: {pdf_error}"
+        
         # Check if files were created successfully
         if not pdf_path or not json_path:
             return f"❌ File generation failed. Please try again."
         
-        # Step 6: Store in memory
-        store_cv_in_memory(customized_cv, job_title, company, pdf_path)
+        # Step 6: Store in memory (cv_text_from_pdf is already in Harvard format)
+        if cv_text_from_pdf:
+            cv_content = cv_text_from_pdf
+        else:
+            # Fallback: generate formatted content if PDF didn't return it
+            print("📝 Generating formatted CV content (fallback)...")
+            cv_content = get_formatted_cv_content_for_display(customized_cv, job_title, company)
         
-        return f"✅ Customized resume created successfully!\n📄 PDF: {pdf_path}\n📁 JSON: {json_path}\n\n**CV Content:**\n{formatted_cv_text}\n\nYou can now use this resume for your application to {job_title} at {company}."
+        store_cv_in_memory(customized_cv, job_title, company, pdf_path, cv_content)
+        
+        return f"✅ Customized resume created successfully!\n📄 PDF: {pdf_path}\n📁 JSON: {json_path}\n\n**CV Content:**\n{cv_content}\n\nYou can now use this resume for your application to {job_title} at {company}."
         
     except Exception as e:
         print(f"❌ Error in create_customized_resume: {e}")
         return f"❌ Error creating customized resume: {e}"
+
 
 @tool("compare_cv_versions", return_direct=False)
 def compare_cv_versions(customized_cv_path: str = None, job_title: str = None, company: str = None) -> str:
@@ -1397,7 +1500,7 @@ def compare_cv_versions(customized_cv_path: str = None, job_title: str = None, c
             data_dir = get_data_dir()
             cv_files = list(data_dir.glob("CV_*.json"))
             if not cv_files:
-                return "❌ No customized CV files found. Please create a customized CV first."
+                return "[FAIL] No customized CV files found. Please create a customized CV first."
             
             # Get the most recent CV file
             customized_cv_path = str(max(cv_files, key=lambda x: x.stat().st_mtime))
@@ -1423,7 +1526,7 @@ def compare_cv_versions(customized_cv_path: str = None, job_title: str = None, c
             with open("data/base_cv.json", 'r', encoding='utf-8') as f:
                 original_cv = json.load(f)
         except Exception as e:
-            return f"❌ Error loading original CV: {e}"
+            return f"[FAIL] Error loading original CV: {e}"
         
         # Use LLM to perform detailed comparison
         llm_model = get_llm_model()
@@ -1480,7 +1583,7 @@ def compare_cv_versions(customized_cv_path: str = None, job_title: str = None, c
         return response.content.strip()
         
     except Exception as e:
-        return f"❌ Error comparing CV versions: {e}"
+        return f"[FAIL] Error comparing CV versions: {e}"
 
 @tool("get_cv_file_info", return_direct=False)
 def get_cv_file_info() -> str:
@@ -1499,7 +1602,7 @@ def get_cv_file_info() -> str:
         if original_cv_path.exists():
             with open(original_cv_path, 'r', encoding='utf-8') as f:
                 original_data = json.load(f)
-            original_info = f"📄 **Original CV**: base_cv.json\n"
+            original_info = f"[FILE] **Original CV**: base_cv.json\n"
             original_info += f"   - Converted from PDF on: {original_data.get('conversion_date', 'Unknown')}\n"
             original_info += f"   - Summary: {original_data.get('summary', 'N/A')[:100]}...\n"
             original_info += f"   - Skills categories: {len(original_data.get('skills', {}))}\n"
@@ -1509,7 +1612,7 @@ def get_cv_file_info() -> str:
         cv_files = list(data_dir.glob("CV_*.json"))
         customized_info = ""
         if cv_files:
-            customized_info = "📄 **Customized CVs**:\n"
+            customized_info = "[FILE] **Customized CVs**:\n"
             for cv_file in sorted(cv_files, key=lambda x: x.stat().st_mtime, reverse=True):
                 try:
                     with open(cv_file, 'r', encoding='utf-8') as f:
@@ -1526,23 +1629,23 @@ def get_cv_file_info() -> str:
                 except Exception as e:
                     customized_info += f"   - **{cv_file.name}** (Error reading: {e})\n\n"
         else:
-            customized_info = "📄 **Customized CVs**: None found\n\n"
+            customized_info = "[FILE] **Customized CVs**: None found\n\n"
         
         # Get PDF files
         pdf_files = list(data_dir.glob("Resume_*.pdf"))
         pdf_info = ""
         if pdf_files:
-            pdf_info = "📄 **PDF Resumes**:\n"
+            pdf_info = "[FILE] **PDF Resumes**:\n"
             for pdf_file in sorted(pdf_files, key=lambda x: x.stat().st_mtime, reverse=True):
                 file_time = datetime.fromtimestamp(pdf_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
                 pdf_info += f"   - **{pdf_file.name}** (Created: {file_time})\n"
         else:
-            pdf_info = "📄 **PDF Resumes**: None found\n"
+            pdf_info = "[FILE] **PDF Resumes**: None found\n"
         
-        return f"# CV Files Information\n\n{original_info}{customized_info}{pdf_info}\n\n💡 **Usage Tips**:\n- Use 'compare_cv_versions' to analyze differences between original and customized CVs\n- Use 'explain_cv_modifications' for detailed modification analysis\n- Use 'read_resume_file' to examine specific CV files"
+        return f"# CV Files Information\n\n{original_info}{customized_info}{pdf_info}\n\n[TIP] **Usage Tips**:\n- Use 'compare_cv_versions' to analyze differences between original and customized CVs\n- Use 'explain_cv_modifications' for detailed modification analysis\n- Use 'read_resume_file' to examine specific CV files"
         
     except Exception as e:
-        return f"❌ Error getting CV file information: {e}"
+        return f"[FAIL] Error getting CV file information: {e}"
 
 @tool("explain_cv_modifications", return_direct=False)
 def explain_cv_modifications(customized_cv_path: str, job_title: str = None, company: str = None) -> str:
@@ -1579,7 +1682,7 @@ def explain_cv_modifications(customized_cv_path: str, job_title: str = None, com
             with open("data/base_cv.json", 'r', encoding='utf-8') as f:
                 original_cv = json.load(f)
         except Exception as e:
-            return f"❌ Error loading original CV: {e}"
+            return f"[FAIL] Error loading original CV: {e}"
         
         # Create mock job requirements for analysis (since we don't have the original)
         mock_requirements = {
@@ -1635,7 +1738,7 @@ def explain_cv_modifications(customized_cv_path: str, job_title: str = None, com
         return explanation
         
     except Exception as e:
-        return f"❌ Error analyzing CV modifications: {e}"
+        return f"[FAIL] Error analyzing CV modifications: {e}"
 
 def analyze_cv_modifications(original_cv: Dict[str, Any], customized_cv: Dict[str, Any], job_title: str, company: str, job_requirements: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1725,7 +1828,7 @@ def analyze_cv_modifications(original_cv: Dict[str, Any], customized_cv: Dict[st
         return analysis
         
     except Exception as e:
-        print(f"❌ Error analyzing CV modifications: {e}")
+        print(f"[FAIL] Error analyzing CV modifications: {e}")
         return {
             "overview": {
                 "total_modifications": 0,
@@ -1745,7 +1848,7 @@ def analyze_cv_modifications(original_cv: Dict[str, Any], customized_cv: Dict[st
 # Removed display_cv_modification_explanations - now handled by LLM dynamically
 
 @tool("generate_cv_pdf", return_direct=False)
-def generate_cv_pdf(customized_cv: Dict[str, Any], job_title: str, company: str, job_description: str = None) -> str:
+def generate_cv_pdf(customized_cv: Dict[str, Any], job_title: str, company: str, job_description: str = None) -> tuple:
     """
     Generate a professional PDF resume from customized CV data using the Harvard CV template.
     This tool creates a ready-to-use PDF file that users can download and submit with job applications.
@@ -1757,9 +1860,12 @@ def generate_cv_pdf(customized_cv: Dict[str, Any], job_title: str, company: str,
         job_description: Target job description for enhanced tailoring (optional)
     
     Returns:
-        Path to generated PDF file (e.g., "C:/path/to/Resume_Company_Title_20241201_143022.pdf")
+        Tuple of (pdf_path, cv_text) where:
+        - pdf_path: Path to generated PDF file (e.g., "C:/path/to/Resume_Company_Title_20241201_143022.pdf")
+        - cv_text: Formatted CV text in Harvard format (used for display and storage)
     
     Note: Always use this tool after customize_cv to create the PDF version of the customized resume.
+    The cv_text is the same format that's embedded in the PDF and can be used for display.
     """
     try:
         # Use the customized CV data directly
@@ -1893,7 +1999,7 @@ CV DATA TO CONVERT:
         
         # Check for empty CV text
         if not cv_text:
-            print("❌ Error: Empty CV text generated")
+            print("[FAIL] Error: Empty CV text generated")
             return ""
         
         # Create filename for PDF
@@ -1972,7 +2078,7 @@ CV DATA TO CONVERT:
         return str(pdf_path), cv_text
         
     except Exception as e:
-        print(f"❌ Error generating PDF: {e}")
+        print(f"[FAIL] Error generating PDF: {e}")
         return "", ""
 
 def extract_matching_keywords(job_title: str, keywords: Dict[str, List[str]]) -> List[str]:
@@ -1985,7 +2091,7 @@ def extract_matching_keywords(job_title: str, keywords: Dict[str, List[str]]) ->
             for keyword in keyword_list:
                 if keyword.lower() in title_lower:
                     if category == "negative_keywords":
-                        matching.append(f"❌{keyword}")  # Mark negative keywords with ❌
+                        matching.append(f"[EXCLUDE]{keyword}")  # Mark negative keywords with [EXCLUDE]
                     else:
                         matching.append(f"{category}:{keyword}")
     
@@ -2054,32 +2160,32 @@ def filter_jobs_with_negative_keywords(jobs: List[dict], negative_keywords: List
             filtered_jobs.append(job)
         else:
             excluded_count += 1
-            print(f"🚫 Excluded: {job.get('title', 'N/A')} at {job.get('company', 'N/A')} (matched: {matched_keyword})")
+            print(f"[EXCLUDE] Excluded: {job.get('title', 'N/A')} at {job.get('company', 'N/A')} (matched: {matched_keyword})")
     
-    print(f"🔍 Filtered out {excluded_count} jobs with negative keywords")
+    print(f"[SEARCH] Filtered out {excluded_count} jobs with negative keywords")
     return filtered_jobs
 
 def convert_resume():
     """Convert PDF resume to structured JSON using LLM."""
     # Get data directory with debugging
     data_dir = get_data_dir()
-    print(f"📁 Using data directory: {data_dir}")
-    print(f"📁 Data directory exists: {data_dir.exists()}")
+    print(f"[DIR] Using data directory: {data_dir}")
+    print(f"[DIR] Data directory exists: {data_dir.exists()}")
     
     # Paths
     pdf_path = data_dir / "resume.pdf"
     output_path = data_dir / "base_cv.json"
     
-    print(f"📄 Looking for resume at: {pdf_path}")
-    print(f"📄 Resume file exists: {pdf_path.exists()}")
+    print(f"[FILE] Looking for resume at: {pdf_path}")
+    print(f"[FILE] Resume file exists: {pdf_path.exists()}")
     
     if not pdf_path.exists():
         # List files in data directory for debugging
         try:
             files_in_data = list(data_dir.glob("*"))
-            print(f"📁 Files in data directory: {[f.name for f in files_in_data]}")
+            print(f"[DIR] Files in data directory: {[f.name for f in files_in_data]}")
         except Exception as e:
-            print(f"❌ Error listing data directory: {e}")
+            print(f"[FAIL] Error listing data directory: {e}")
         
         raise FileNotFoundError(f"Resume file not found at {pdf_path}")
     
@@ -2316,7 +2422,7 @@ def cleanup_chat_memory():
         
         # Combine important data with cleaned regular messages
         chat_memory = important_data + cleaned_regular
-        print(f"🧹 Memory cleaned: {len(chat_memory)} messages retained ({len(important_data)} important data, {len(cleaned_regular)} regular messages)")
+        print(f"[CLEAN] Memory cleaned: {len(chat_memory)} messages retained ({len(important_data)} important data, {len(cleaned_regular)} regular messages)")
 
 def get_initial_job_search_prompt():
     """Get the initial job search prompt."""
@@ -2387,12 +2493,43 @@ KEY CAPABILITIES:
 - Plan and execute multi-step workflows autonomously
 
 CV CUSTOMIZATION WORKFLOW (CRITICAL):
-When users ask for CV customization, ALWAYS use the complete workflow:
-1. **create_customized_resume** - This tool handles the ENTIRE process including PDF generation
-   - Use this for ALL CV customization requests (e.g., "Create CV for job #3", "Customize my CV for Google")
-   - This tool automatically: analyzes job requirements → customizes CV → generates JSON → generates PDF
-   - DO NOT use individual tools like customize_cv, generate_cv_json, generate_cv_pdf separately
-   - The create_customized_resume tool ensures PDF is always created
+When users ask for CV customization, use the create_customized_resume tool which handles ALL steps automatically.
+
+1. **Primary Tool**: create_customized_resume
+   - This tool executes the complete workflow internally:
+     * Fetches job description from URL (if provided)
+     * Analyzes job requirements using LLM
+     * Creates customized CV based on requirements
+     * Generates PDF file for download
+     * Generates JSON file for data storage
+     * Stores everything in memory
+     * Returns formatted CV content and file paths
+
+2. **Required Parameters**:
+   - job_title: Target job title (required)
+   - company: Target company (required)
+   - job_url: (Optional) URL to fetch job description
+
+3. **What the tool does internally** (you don't need to call these):
+   - Calls fetch_job_description.invoke() if job_url is provided
+   - Calls analyze_job_requirements.invoke() to extract requirements
+   - Calls customize_cv.invoke() to create customized CV
+   - Calls generate_cv_pdf.invoke() to create PDF
+   - Calls generate_cv_json.invoke() to create JSON
+   - Calls get_formatted_cv_content_for_display() for formatting
+   - Calls store_cv_in_memory() to store in chat memory
+   - Returns complete response with files and formatted content
+
+WORKFLOW EXAMPLES:
+- "Create CV for Software Engineer at Google" → create_customized_resume(job_title="Software Engineer", company="Google")
+- "Create CV for job #3" → Get job details from memory, then create_customized_resume with those details
+- "Customize my CV for Microsoft Data Scientist" → create_customized_resume(job_title="Data Scientist", company="Microsoft")
+
+CRITICAL RULES:
+- Use create_customized_resume for ALL CV customization requests
+- The tool handles everything automatically - do NOT call other CV tools individually
+- The tool returns complete formatted response with CV content and file paths
+- Only use individual CV tools (fetch_job_description, etc.) for debugging or special cases
 
 CV COMPARISON & ANALYSIS TOOLS:
 1. **compare_cv_versions**: Compare original CV with customized versions
@@ -2441,11 +2578,11 @@ CRITICAL INSTRUCTIONS:
 - For CV-related questions, prioritize CV comparison tools over general analysis
 
 CV CUSTOMIZATION REQUESTS (CRITICAL):
-- When user asks for CV customization (any variation), ALWAYS use create_customized_resume tool
+- When user asks for CV customization (any variation), use create_customized_resume tool
 - Examples: "Create CV for job #3", "Customize my CV for Google", "Make a resume for this job"
-- This ensures PDF is always generated along with JSON
-- DO NOT use customize_cv, generate_cv_json, or generate_cv_pdf individually
-- The create_customized_resume tool handles the complete workflow automatically
+- The create_customized_resume tool handles all steps automatically internally
+- Always provide the complete result with CV content and file paths
+- The tool will return formatted CV content and file paths automatically
 
 Be strategic and helpful, but efficient. Use the right tool for the right job."""
     
@@ -2492,7 +2629,7 @@ Be strategic and helpful, but efficient. Use the right tool for the right job.""
     except Exception as e:
         if progress:
             progress.stop()
-        print(f"\n❌ Error: {e}")
+        print(f"\n[FAIL] Error: {e}")
         return "I encountered an error while processing your request."
     
     finally:
@@ -2501,16 +2638,16 @@ Be strategic and helpful, but efficient. Use the right tool for the right job.""
 
 def show_initial_info():
     """Display initial information about the agent and requirements."""
-    print("🤖 AI Job Search Chatbot v5 - Enhanced with CV Customization")
+    print("[BOT] AI Job Search Chatbot v5 - Enhanced with CV Customization")
     print("="*60)
-    print("📋 FEATURES:")
+    print("[INFO] FEATURES:")
     print("• Searches 200+ job openings across multiple job sites")
     print("• AI-powered job matching with your resume and preferences")
     print("• Customized CV generation for specific job applications")
     print("• Professional PDF resume creation using Harvard template")
     print("="*60)
 
-def store_cv_in_memory(cv_data: Dict[str, Any], job_title: str, company: str, file_path: str):
+def store_cv_in_memory(cv_data: Dict[str, Any], job_title: str, company: str, file_path: str, formatted_text: str = None):
     """Store CV data in chat memory for dynamic querying."""
     cv_summary = {
         "type": "customized_cv",
@@ -2518,7 +2655,8 @@ def store_cv_in_memory(cv_data: Dict[str, Any], job_title: str, company: str, fi
         "company": company,
         "file_path": file_path,
         "timestamp": datetime.now().isoformat(),
-        "cv_data": cv_data
+        "cv_data": cv_data,
+        "formatted_text": formatted_text  # Store the formatted text for display
     }
     
     chat_memory.append({
@@ -2538,18 +2676,18 @@ def chatbot_mode():
     # Check if resume PDF exists
     resume_pdf_path = get_data_dir() / "resume.pdf"
     if not resume_pdf_path.exists():
-        print("\n❌ ERROR: resume.pdf not found!")
+        print("\n[FAIL] ERROR: resume.pdf not found!")
         print("Please ensure resume.pdf is in the data folder.")
         return
     
-    print(f"\n✅ Resume PDF found: {resume_pdf_path.name}")
+    print(f"\n[PASS] Resume PDF found: {resume_pdf_path.name}")
     
     # Extract fresh resume from PDF
     progress = ProgressIndicator("Extracting resume from PDF")
     progress.start()
     convert_resume()
     progress.stop()
-    print("✅ Profile ready!")
+    print("[PASS] Profile ready!")
     
     # Load resume data and create embeddings
     global resume, resume_text, resume_vec, pref_vec
@@ -2564,7 +2702,7 @@ def chatbot_mode():
     })
     
     # Start with job search
-    print("\n🎯 Let's start with the job search!")
+    print("\n[TARGET] Let's start with the job search!")
     initial_prompt = get_initial_job_search_prompt()
     
     print(f"\n🔍 Running initial job search...")
