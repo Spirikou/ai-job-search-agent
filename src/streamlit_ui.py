@@ -18,8 +18,7 @@ if str(src_path) not in sys.path:
 
 # Import only the functions we actually use from agent_core
 from agent_core import (
-    convert_resume, load_resume_data, run_agent_with_memory,
-    analyze_job_requirements, customize_cv, generate_cv_json, generate_cv_pdf, fetch_job_description
+    convert_resume, load_resume_data, run_agent_with_memory
 )
 
 # ============================================================================
@@ -548,35 +547,25 @@ def display_chat_message(message: Dict[str, Any]):
         </div>
         """, unsafe_allow_html=True)
     elif role == 'assistant':
-        # Check if this is a CV-related message and display it specially
-        if any(keyword in content.lower() for keyword in ["customized cv", "cv content", "resume created", "**cv content:**"]):
-            # Split content to separate the message from CV content
-            lines = content.split('\n')
-            message_part = []
-            cv_content_part = []
-            in_cv_section = False
+        # Check if this contains CV content and display it specially
+        if "**CV Content:**" in content:
+            # Split content to separate message from CV content
+            message_part, cv_content = content.split("**CV Content:**", 1)
+            message_part = message_part.strip()
+            cv_content = cv_content.strip()
             
-            for line in lines:
-                if "**CV Content:**" in line:
-                    in_cv_section = True
-                    continue
-                elif in_cv_section:
-                    cv_content_part.append(line)
-                else:
-                    message_part.append(line)
-            
-            message_text = '\n'.join(message_part).strip()
-            cv_text = '\n'.join(cv_content_part).strip()
-            
+            # Display the message part
             st.markdown(f"""
             <div class="chat-message assistant-message">
-                <strong>AI Assistant:</strong> {message_text}
+                <strong>AI Assistant:</strong> {message_part}
             </div>
             """, unsafe_allow_html=True)
             
-            if cv_text:
-                # Enhanced CV display with better formatting
+            # Display CV content using Streamlit's native markdown rendering
+            if cv_content:
                 st.markdown("### 📄 Customized CV")
+                
+                # Use Streamlit's native markdown with custom styling
                 st.markdown(f"""
                 <div style='
                     background-color: var(--bg-secondary); 
@@ -586,13 +575,17 @@ def display_chat_message(message: Dict[str, Any]):
                     color: var(--text-primary); 
                     font-family: "Segoe UI", Arial, sans-serif;
                     line-height: 1.6;
-                    white-space: pre-wrap;
                     box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
                     margin: 1rem 0;
                     max-height: 500px;
                     overflow-y: auto;
-                '>{cv_text}</div>
+                '>
                 """, unsafe_allow_html=True)
+                
+                # Render the CV content as markdown (this will properly format headers, bullets, etc.)
+                st.markdown(cv_content)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
                 
                 # Add download buttons for CV files
                 col1, col2 = st.columns(2)
@@ -617,11 +610,14 @@ def display_chat_message(message: Dict[str, Any]):
                         "chat"
                     )
         else:
+            # Regular message - let Streamlit handle markdown naturally
             st.markdown(f"""
             <div class="chat-message assistant-message">
-                <strong>AI Assistant:</strong> {content}
+                <strong>AI Assistant:</strong> 
             </div>
             """, unsafe_allow_html=True)
+            # Display content as markdown to handle any formatting
+            st.markdown(content)
     elif role == 'system':
         st.markdown(f"""
         <div class="chat-message system-message">
@@ -679,261 +675,9 @@ def display_job_results(jobs_data: List[Dict[str, Any]]):
     st.markdown("**All Job Opportunities:**")
     st.markdown("\n".join(job_list))
 
-def create_cv_for_job(job: Dict[str, Any]):
-    """Create customized CV for a specific job with enhanced progress indication and display."""
-    job_title = job.get('title', 'N/A')
-    company = job.get('company', 'N/A')
-    job_url = job.get('url', None)
-    
-    # Create a more detailed progress indicator
-    progress_container = st.container()
-    with progress_container:
-        st.markdown("### 📄 Generating Customized CV")
-        
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        try:
-            # Step 1: Fetch job description if URL provided
-            job_description = None
-            if job_url:
-                status_text.text("📥 Fetching job description...")
-                progress_bar.progress(10)
-                job_description = fetch_job_description(job_url)
-            
-            # Step 2: Analyze job requirements
-            status_text.text("🔍 Analyzing job requirements...")
-            progress_bar.progress(25)
-            job_requirements = analyze_job_requirements(
-                job_description or f"Job title: {job_title} at {company}",
-                job_title,
-                company
-            )
-            
-            # Step 3: Create customized CV
-            status_text.text("✏️ Customizing resume content...")
-            progress_bar.progress(50)
-            customized_cv = customize_cv(job_requirements, job_title, company)
-            
-            if not customized_cv:
-                raise Exception("CV customization failed")
-            
-            # Step 4: Generate PDF file first to get formatted text
-            status_text.text("📄 Generating PDF document...")
-            progress_bar.progress(70)
-            pdf_path, formatted_cv_text = generate_cv_pdf(customized_cv, job_title, company, job_description)
-            
-            # Step 5: Generate JSON file with formatted text
-            status_text.text("📄 Generating JSON file...")
-            progress_bar.progress(90)
-            json_path = generate_cv_json(customized_cv, job_title, company, formatted_cv_text)
-            
-            # Complete progress
-            progress_bar.progress(100)
-            status_text.text("🎉 CV generation completed!")
-            time.sleep(1)
-            
-            # Clear progress indicators
-            progress_bar.empty()
-            status_text.empty()
-            
-            # Get the formatted CV content for display
-            cv_content = formatted_cv_text
-            
-            # Display the customized CV content
-            st.markdown("### 📄 Customized CV Preview")
-            st.markdown(f"""
-            <div style='
-                background-color: var(--bg-secondary); 
-                padding: 2rem; 
-                border-radius: 0.8rem; 
-                border: 2px solid var(--accent-success); 
-                color: var(--text-primary); 
-                font-family: "Segoe UI", Arial, sans-serif;
-                line-height: 1.6;
-                white-space: pre-wrap;
-                box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
-                margin: 1rem 0;
-                max-height: 500px;
-                overflow-y: auto;
-            '>{cv_content}</div>
-            """, unsafe_allow_html=True)
-            
-            # Provide download options
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                create_download_button(
-                    Path(pdf_path) if pdf_path else None,
-                    "PDF",
-                    "📥 Download PDF Resume",
-                    f"{job_title}_{company}"
-                )
-            
-            with col2:
-                create_download_button(
-                    Path(json_path) if json_path else None,
-                    "JSON",
-                    "📥 Download JSON Data",
-                    f"{job_title}_{company}"
-                )
-            
-            # Add to chat history with CV content
-            chat_cv_content = f"✅ Customized CV created successfully for {job_title} at {company}!\n\n**CV Content:**\n{cv_content}\n\nDownload options are available above."
-            
-            st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': chat_cv_content,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            st.rerun()
-            
-        except Exception as e:
-            # Clear progress indicators on error
-            progress_bar.empty()
-            status_text.empty()
-            
-            st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': f"❌ Error creating CV: {e}",
-                'timestamp': datetime.now().isoformat()
-            })
-            st.rerun()
-
-def get_formatted_cv_content(job_title: str, company: str, json_files: List[Path]) -> str:
-    """Get the formatted CV content from JSON metadata."""
-    if not json_files:
-        return "CV content not available"
-    
-    try:
-        # Get the latest JSON file
-        latest_json = max(json_files, key=lambda x: x.stat().st_mtime)
-        
-        with open(latest_json, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-        
-        # Try to get formatted text from metadata first
-        if 'metadata' in json_data and 'formatted_text' in json_data['metadata']:
-            formatted_text = json_data['metadata']['formatted_text']
-            if formatted_text:
-                return formatted_text
-        
-        # Fallback to building from cv_data for backward compatibility
-        if 'cv_data' in json_data:
-            return build_readable_cv(json_data['cv_data'])
-        
-        return "CV data not found in JSON file"
-        
-    except Exception as e:
-        print(f"❌ Error reading CV content: {e}")
-        return "Error reading CV content"
-
-def build_readable_cv(cv_data: Dict[str, Any]) -> str:
-    """Build a readable version of the CV from JSON data."""
-    cv_text = []
-    
-    # Add summary
-    if cv_data.get('summary'):
-        cv_text.append(f"## Summary\n{cv_data['summary']}\n")
-    
-    # Add experience
-    if cv_data.get('experience'):
-        cv_text.append("## Experience")
-        for exp in cv_data['experience']:
-            cv_text.append(f"\n### {exp.get('title', 'N/A')} at {exp.get('company', 'N/A')}")
-            cv_text.append(f"**Duration:** {exp.get('duration', 'N/A')}")
-            cv_text.append(f"**Location:** {exp.get('location', 'N/A')}")
-            if exp.get('description'):
-                cv_text.append("**Key Achievements:**")
-                for desc in exp['description']:
-                    cv_text.append(f"• {desc}")
-            cv_text.append("")
-    
-    # Add education
-    if cv_data.get('education'):
-        cv_text.append("## Education")
-        for edu in cv_data['education']:
-            cv_text.append(f"\n### {edu.get('degree', 'N/A')}")
-            cv_text.append(f"**Institution:** {edu.get('institution', 'N/A')}")
-            cv_text.append(f"**Year:** {edu.get('year', 'N/A')}")
-            if edu.get('location'):
-                cv_text.append(f"**Location:** {edu.get('location', 'N/A')}")
-        cv_text.append("")
-    
-    # Add skills
-    if cv_data.get('skills'):
-        cv_text.append("## Skills")
-        for category, skills in cv_data['skills'].items():
-            cv_text.append(f"\n### {category.title()}")
-            cv_text.append(f"{', '.join(skills)}")
-        cv_text.append("")
-    
-    # Add certifications
-    if cv_data.get('certifications'):
-        cv_text.append("## Certifications")
-        for cert in cv_data['certifications']:
-            cv_text.append(f"• {cert}")
-        cv_text.append("")
-    
-    # Add projects
-    if cv_data.get('projects'):
-        cv_text.append("## Projects")
-        for project in cv_data['projects']:
-            cv_text.append(f"\n### {project.get('name', 'N/A')}")
-            cv_text.append(f"{project.get('description', 'N/A')}")
-            if project.get('technologies'):
-                cv_text.append(f"**Technologies:** {', '.join(project['technologies'])}")
-        cv_text.append("")
-    
-    return '\n'.join(cv_text)
 
 
-def handle_cv_creation_request(user_input: str) -> bool:
-    """Handle CV creation requests from chat input. Returns True if handled."""
-    user_input_lower = user_input.lower()
-    
-    # Check for CV creation patterns
-    cv_patterns = [
-        "create cv", "create resume", "customize cv", "customize resume",
-        "generate cv", "generate resume", "make cv", "make resume"
-    ]
-    
-    if not any(pattern in user_input_lower for pattern in cv_patterns):
-        return False
-    
-    # Try to extract job information from the user input
-    # Look for job titles and companies in the input
-    import re
-    
-    # Simple extraction patterns
-    job_title_match = re.search(r'(?:for|as|to)\s+([^,\n]+?)(?:\s+at|\s+for|\s*$)', user_input, re.IGNORECASE)
-    company_match = re.search(r'(?:at|for)\s+([^,\n]+?)(?:\s*$)', user_input, re.IGNORECASE)
-    
-    job_title = job_title_match.group(1).strip() if job_title_match else "Software Engineer"
-    company = company_match.group(1).strip() if company_match else "Tech Company"
-    
-    # Create a mock job object for CV creation
-    mock_job = {
-        'title': job_title,
-        'company': company,
-        'url': None,
-        'location': 'Remote',
-        'score': 0.85
-    }
-    
-    # Add a message to chat history indicating CV creation
-    st.session_state.chat_history.append({
-        'role': 'assistant',
-        'content': f"🎯 I'll create a customized CV for **{job_title}** at **{company}**. Let me analyze the requirements and generate your personalized resume...",
-        'timestamp': datetime.now().isoformat()
-    })
-    
-    # Create the CV
-    create_cv_for_job(mock_job)
-    
-    return True
+
 
 
 # ============================================================================
@@ -964,6 +708,7 @@ def main():
                 st.info("""
                 💡 **Tips for CV Management:**
                 - **Create CVs:** "Create a CV for Software Engineer at Google"
+                - **Job-specific CVs:** "Create a CV for job #3" or "Customize my CV for the Microsoft job"
                 - **Compare CVs:** "Compare my original CV with the customized version"
                 - **Analyze Changes:** "Explain the differences between my CVs"
                 - **List CVs:** "Show me all my CV files"
@@ -1004,36 +749,30 @@ def main():
                     'timestamp': datetime.now().isoformat()
                 })
                 
-                # Check if this is a CV creation request first
-                if handle_cv_creation_request(current_input):
-                    # CV creation was handled, clear input and rerun
-                    st.session_state.clear_input = True
-                    st.rerun()
-                else:
-                    # Get AI response for other requests
-                    with st.spinner("AI is thinking..."):
-                        try:
-                            response = run_agent_with_memory(current_input)
-                            
-                            # Add assistant response to history
-                            st.session_state.chat_history.append({
-                                'role': 'assistant',
-                                'content': response,
-                                'timestamp': datetime.now().isoformat()
-                            })
-                            
-                            # Clear the input by rerunning with a flag
-                            st.session_state.clear_input = True
-                            st.rerun()
-                            
-                        except Exception as e:
-                            st.session_state.chat_history.append({
-                                'role': 'assistant',
-                                'content': f"Error getting AI response: {e}",
-                                'timestamp': datetime.now().isoformat()
-                            })
-                            st.session_state.clear_input = True
-                            st.rerun()
+                # Get AI response for all requests using the agent
+                with st.spinner("AI is thinking..."):
+                    try:
+                        response = run_agent_with_memory(current_input)
+                        
+                        # Add assistant response to history
+                        st.session_state.chat_history.append({
+                            'role': 'assistant',
+                            'content': response,
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        
+                        # Clear the input by rerunning with a flag
+                        st.session_state.clear_input = True
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.session_state.chat_history.append({
+                            'role': 'assistant',
+                            'content': f"Error getting AI response: {e}",
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        st.session_state.clear_input = True
+                        st.rerun()
         else:
             # Show workflow progress and inputs/results
             st.markdown("### 📊 Workflow Progress")
