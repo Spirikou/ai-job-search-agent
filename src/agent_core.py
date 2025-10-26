@@ -1396,34 +1396,57 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
     Returns:
         Summary of the customization process and file paths
     """
+    import traceback
+    
     try:
         print(f"🎯 Starting CV customization for {job_title} at {company}")
+        start_time = time.time()
         
         # Step 1: Fetch job description if URL provided
         job_description = None
         if job_url:
-            print("📥 Fetching job description...")
-            job_description = fetch_job_description.invoke({"job_url": job_url})
+            print(f"📥 Fetching job description from: {job_url}")
+            try:
+                job_description = fetch_job_description.invoke({"job_url": job_url})
+                print(f"✅ Job description fetched ({len(job_description) if job_description else 0} chars)")
+            except Exception as e:
+                print(f"❌ ERROR in fetch_job_description: {e}")
+                print(f"Traceback: {traceback.format_exc()}")
+                return f"❌ Error fetching job description: {str(e)}\n\nDetails: {traceback.format_exc()}"
         
         # Step 2: Analyze job requirements
         print("🧠 Analyzing job requirements...")
-        job_requirements = analyze_job_requirements.invoke({
-            "job_description": job_description or f"Job title: {job_title} at {company}",
-            "job_title": job_title,
-            "company": company
-        })
+        try:
+            job_requirements = analyze_job_requirements.invoke({
+                "job_description": job_description or f"Job title: {job_title} at {company}",
+                "job_title": job_title,
+                "company": company
+            })
+            print(f"✅ Job requirements analyzed ({len(str(job_requirements))} chars)")
+        except Exception as e:
+            print(f"❌ ERROR in analyze_job_requirements: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return f"❌ Error analyzing job requirements: {str(e)}\n\nDetails: {traceback.format_exc()}"
         
         # Step 3: Create customized CV
         print("📝 Creating customized CV...")
-        customized_cv = customize_cv.invoke({
-            "job_requirements": job_requirements,
-            "job_title": job_title,
-            "company": company
-        })
+        try:
+            customized_cv = customize_cv.invoke({
+                "job_requirements": job_requirements,
+                "job_title": job_title,
+                "company": company
+            })
+            print(f"✅ CV customized successfully")
+        except Exception as e:
+            print(f"❌ ERROR in customize_cv: {e}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return f"❌ Error creating customized CV: {str(e)}\n\nDetails: {traceback.format_exc()}"
         
         # Check if customization was successful
         if not customized_cv or customized_cv == {}:
             return f"❌ CV customization failed. Please try again or check the job requirements."
+        
+        print(f"⏱️ Time elapsed: {time.time() - start_time:.2f}s")
         
         # Step 4: Generate JSON file
         print("📄 Generating JSON file...")
@@ -1435,8 +1458,11 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
             })
             print(f"✅ JSON generated: {json_path}")
         except Exception as json_error:
-            print(f"❌ JSON generation error: {json_error}")
-            return f"❌ JSON generation failed: {json_error}"
+            print(f"❌ ERROR in generate_cv_json: {json_error}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return f"❌ Error generating JSON file: {str(json_error)}\n\nDetails: {traceback.format_exc()}"
+        
+        print(f"⏱️ Time elapsed: {time.time() - start_time:.2f}s")
         
         # Step 5: Generate PDF file
         print("📄 Generating PDF file...")
@@ -1457,28 +1483,42 @@ def create_customized_resume(job_title: str, company: str, job_url: str = None) 
             
             print(f"✅ PDF generated: {pdf_path}")
         except Exception as pdf_error:
-            print(f"❌ PDF generation error: {pdf_error}")
-            return f"❌ PDF generation failed: {pdf_error}"
+            print(f"❌ ERROR in generate_cv_pdf: {pdf_error}")
+            print(f"Traceback: {traceback.format_exc()}")
+            return f"❌ Error generating PDF file: {str(pdf_error)}\n\nDetails: {traceback.format_exc()}"
         
         # Check if files were created successfully
         if not pdf_path or not json_path:
             return f"❌ File generation failed. Please try again."
         
         # Step 6: Store in memory (cv_text_from_pdf is already in Harvard format)
-        if cv_text_from_pdf:
-            cv_content = cv_text_from_pdf
-        else:
-            # Fallback: generate formatted content if PDF didn't return it
-            print("📝 Generating formatted CV content (fallback)...")
-            cv_content = get_formatted_cv_content_for_display(customized_cv, job_title, company)
+        print("💾 Storing CV in memory...")
+        try:
+            if cv_text_from_pdf:
+                cv_content = cv_text_from_pdf
+            else:
+                # Fallback: generate formatted content if PDF didn't return it
+                print("📝 Generating formatted CV content (fallback)...")
+                cv_content = get_formatted_cv_content_for_display(customized_cv, job_title, company)
+            
+            store_cv_in_memory(customized_cv, job_title, company, pdf_path, cv_content)
+            print(f"✅ CV stored in memory")
+        except Exception as memory_error:
+            print(f"❌ ERROR storing in memory: {memory_error}")
+            print(f"Traceback: {traceback.format_exc()}")
+            # Continue even if memory storage fails
         
-        store_cv_in_memory(customized_cv, job_title, company, pdf_path, cv_content)
+        total_time = time.time() - start_time
+        print(f"✅ COMPLETE! Total time: {total_time:.2f}s")
         
         return f"✅ Customized resume created successfully!\n📄 PDF: {pdf_path}\n📁 JSON: {json_path}\n\n**CV Content:**\n{cv_content}\n\nYou can now use this resume for your application to {job_title} at {company}."
         
     except Exception as e:
-        print(f"❌ Error in create_customized_resume: {e}")
-        return f"❌ Error creating customized resume: {e}"
+        error_msg = str(e)
+        tb = traceback.format_exc()
+        print(f"❌ UNEXPECTED ERROR in create_customized_resume: {error_msg}")
+        print(f"Full traceback:\n{tb}")
+        return f"❌ Error creating customized resume: {error_msg}\n\nFull error details:\n{tb}"
 
 
 @tool("compare_cv_versions", return_direct=False)

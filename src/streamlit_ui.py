@@ -714,6 +714,20 @@ def main():
                 - **List CVs:** "Show me all my CV files"
                 - **Get Details:** "What changes were made to my CV for the Google job?"
                 """)
+                
+                with st.expander("🐛 Debugging & Logs"):
+                    st.markdown("""
+                    **To view detailed logs and debug errors:**
+                    1. Open the terminal/console where Streamlit is running
+                    2. Look for print statements showing each step (🎯, 📥, 🧠, etc.)
+                    3. Errors will show which step failed and full tracebacks
+                    4. Timestamps show how long each step takes
+                    
+                    **Common Error Messages:**
+                    - ❌ ERROR in [step_name]: Shows exactly which step failed
+                    - Time elapsed: Shows processing time for performance analysis
+                    - Full Traceback: Complete error details for debugging
+                    """)
             
             # Display chat history
             for message in st.session_state.chat_history:
@@ -766,9 +780,24 @@ def main():
                         st.rerun()
                         
                     except Exception as e:
+                        import traceback
+                        error_details = f"""
+**Error Details:**
+- Error Type: {type(e).__name__}
+- Error Message: {str(e)}
+- Full Traceback:
+```
+{traceback.format_exc()}
+```
+
+**Troubleshooting:**
+1. Check the console/terminal where Streamlit is running for detailed logs
+2. Look for print statements showing which step failed
+3. Common issues: Network timeout, API rate limits, or LLM processing timeout
+"""
                         st.session_state.chat_history.append({
                             'role': 'assistant',
-                            'content': f"Error getting AI response: {e}",
+                            'content': f"Error getting AI response: {e}\n{error_details}",
                             'timestamp': datetime.now().isoformat()
                         })
                         st.session_state.clear_input = True
